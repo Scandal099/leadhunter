@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LeadHunter — поиск клиентов без сайта</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='12' fill='none' stroke='white' stroke-width='3'/><circle cx='16' cy='16' r='4' fill='white'/></svg>" />
-  <link rel="stylesheet" href="./style.css?v=12" />
+  <link rel="stylesheet" href="./style.css?v=13" />
   <script>if (/github\.io$/i.test(location.hostname)) document.documentElement.classList.add('cloud-only');</script>
   <style>html.cloud-only .nav-btn[data-view="parser"],html.cloud-only #view-parser,html.cloud-only #btn-recheck,html.cloud-only [data-bulk="recheck"]{display:none!important}</style>
 </head>
@@ -119,11 +119,13 @@
         <label class="switch sm"><input type="checkbox" id="f-hide-taken" /><i></i>Скрыть взятые</label>
         <button class="pill" id="btn-select-all">Выделить все</button>
         <button class="pill" id="btn-export">Экспорт CSV</button>
+        <button class="pill" id="btn-export-md">Для ИИ (.md)</button>
         <button class="pill glow" id="btn-recheck">Проверить сайты</button>
       </div>
 
       <div class="bulkbar hidden" id="bulkbar">
         <span id="bulk-count">0 выбрано</span>
+        <button class="pill glow" data-bulk="ai">В воронку + .md для ИИ</button>
         <button class="pill" data-bulk="base">+ В базу</button>
         <button class="pill" data-bulk="reject">Отказ</button>
         <button class="pill" data-bulk="recheck">Перепроверить</button>
@@ -144,7 +146,11 @@
 
     <!-- КЛИЕНТЫ (воронка) -->
     <section class="view" id="view-clients">
-      <header class="topbar"><h2 class="shimmer-text title">Воронка клиентов</h2></header>
+      <header class="topbar">
+        <h2 class="shimmer-text title">Воронка клиентов</h2>
+        <div class="grow"></div>
+        <button class="pill" id="btn-funnel-md">Скачать .md для ИИ</button>
+      </header>
       <div class="kanban" id="kanban"></div>
     </section>
 
@@ -183,6 +189,6 @@
   <div class="toast" id="toast"></div>
 
   <script src="./maplinks.js?v=4"></script>
-  <script src="./app.js?v=12"></script>
+  <script src="./app.js?v=13"></script>
 </body>
 </html>
