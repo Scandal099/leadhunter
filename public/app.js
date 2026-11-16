@@ -726,13 +726,13 @@ function renderKanban() {
   const cols = [['base', 'В базе'], ['noanswer', 'Недозвон'], ['work', 'В работе'], ['client', 'Клиенты'], ['reject', 'Отказ']];
   $('#kanban').innerHTML = cols.map(([k, t]) => {
     const items = S.leads.filter((l) => l.status === k).sort((a, b) => b.updatedAt - a.updatedAt);
-    return `<div class="col glass" data-col="${k}"><h3 style="display:flex;align-items:center;gap:6px">${t}<b>${items.length}</b>${items.length ? `<button class="pill" data-col-clear="${k}" style="margin-left:auto;padding:2px 8px;font-size:11px" title="Убрать всех из колонки">Очистить</button>` : ''}</h3>${items.map((l) => `
+    return `<div class="col glass" data-col="${k}"><h3 style="display:flex;align-items:center;gap:6px">${t}<b>${items.length}</b>${items.length ? `<button class="pill" data-col-clear="${k}" style="margin-left:auto;padding:2px 8px;font-size:11px" title="Убрать всех из колонки">Очистить</button>` : ''}</h3><div class="col-body">${items.map((l) => `
       <div class="card" draggable="true" data-id="${l.id}">
         <div class="c-top"><span class="chip ${siteStatus(l) === 'pending' ? 'pending' : siteStatus(l)}"><i></i>${SITE[siteStatus(l)]?.short || '…'}</span>${l.rating ? `<span class="rating">${I.star}${Number(l.rating).toFixed(1)}</span>` : ''}<button class="pill" data-k-remove="${l.id}" title="Убрать из воронки (в Новые)" style="margin-left:auto;padding:2px 7px;font-size:11px;line-height:1">✕</button></div>
         <h3 class="c-name">${esc(l.name)}</h3>
         <div class="c-meta">${esc(l.phones[0] || '')}</div>
         ${l.note ? `<div class="c-reason">${esc(l.note)}</div>` : ''}
-      </div>`).join('')}</div>`;
+      </div>`).join('')}</div></div>`;
   }).join('');
 }
 $('#kanban').addEventListener('click', async (e) => {
