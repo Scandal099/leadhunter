@@ -16,9 +16,10 @@ const SRC_LIST = [['2gis', '2ГИС'], ['yandex', 'Яндекс'], ['google', 'G
 const NICHES = ['автосервис', 'шиномонтаж', 'барбершоп', 'салон красоты', 'стоматология', 'клининг', 'ремонт квартир', 'натяжные потолки'];
 
 // ---------- доступ ----------
-let access = { owners: [6590068857], lastSources: ['2gis', 'yandex'], lastLimit: 50, panels: {} };
+let access = { owners: [6590068857], lastSources: ['2gis', 'yandex'], lastLimit: 50, panels: {}, temps: {} };
 try { access = { ...access, ...JSON.parse(fs.readFileSync(ACCESS_FILE, 'utf8')) }; } catch {}
 if (!access.panels) access.panels = {};
+if (!access.temps) access.temps = {};
 for (const id of String(process.env.TELEGRAM_ALLOWED || '').split(/[\s,;]+/).filter(Boolean)) if (!access.owners.includes(+id)) access.owners.push(+id);
 const allowedUsernames = new Set(
   ['alexdmgv', ...String(process.env.TELEGRAM_ALLOWED_USERNAMES || '').split(/[\s,;]+/)]
@@ -98,15 +99,35 @@ function panelView() {
   };
 }
 
-async function sendPanel(chatId, forceNew = false) {
-  const v = panelView();
+function clearTemp(chatId) {
+  const tid = access.temps?.[chatId];
+  if (!tid) return;
+  delete access.temps[chatId];
+  api('deleteMessage', { chat_id: chatId, message_id: tid }).catch(() => {});
+}
+
+async function sendTemp(chatId, text, extra = {}) {
+  clearTemp(chatId);
+  const r = await send(chatId, text, extra);
+  if (r?.message_id) { access.temps[chatId] = r.message_id; saveAccess(); }
+  return r;
+}
+
+async function showScreen(chatId, text, extra = {}, forceNew = false) {
+  clearTemp(chatId);
   const oldId = access.panels?.[chatId];
   if (!forceNew && oldId) {
-    try { await edit(chatId, oldId, v.text, v.extra); return; } catch {}
+    try { await edit(chatId, oldId, text, extra); return oldId; } catch {}
   }
   if (oldId) api('deleteMessage', { chat_id: chatId, message_id: oldId }).catch(() => {});
-  const r = await send(chatId, v.text, v.extra);
+  const r = await send(chatId, text, extra);
   if (r?.message_id) { access.panels[chatId] = r.message_id; saveAccess(); }
+  return r?.message_id;
+}
+
+async function sendPanel(chatId, forceNew = false) {
+  const v = panelView();
+  return showScreen(chatId, v.text, v.extra, forceNew);
 }
 
 async function setAppUrl(url) {
@@ -164,7 +185,27 @@ const BUTTONS = { '🚀 Парсинг': '/parse', '📊 Статус': '/status
 
 // ---------- мастер запуска парсинга ----------
 const sessions = new Map(); // chatId -> { step, niches, cities, sources:Set, limit, headless }
+const CITIES = ['Москва', 'Санкт-Петербург', 'Екатеринбург', 'Казань', 'Новосибирск', 'Краснодар'];
 
+function nichesView() {
+  return {
+    text: '<b>Шаг 1/4.</b> Выбери нишу кнопкой или напиши свои через запятую:\n<i>Например: автосервис, барбершоп</i>',
+    extra: ik([
+      ...chunk(NICHES.map((t, i) => ({ text: t, callback_data: 'ni:' + i })), 2),
+      [{ text: '✖ Отмена', callback_data: 'wiz:cancel' }],
+    ]),
+  };
+}
+function citiesView(s) {
+  return {
+    text: `<b>Шаг 2/4.</b> Выбери город кнопкой или напиши свой:\nНиши: <i>${esc(s.niches)}</i>`,
+    extra: ik([
+      ...chunk(CITIES.map((c, i) => ({ text: c, callback_data: 'ci:' + i })), 2),
+      [{ text: '— без города —', callback_data: 'ci:none' }],
+      [{ text: '✖ Отмена', callback_data: 'wiz:cancel' }],
+    ]),
+  };
+}
 function sourcesView(s) {
   return {
     text: `<b>Шаг 3/4.</b> Источники:\n\nНиши: ${esc(s.niches)}\nГорода: ${esc(s.cities || 'без города')}`,
@@ -191,9 +232,9 @@ async function launch(chatId, opts) {
   try {
     await jobs.start({ ...opts, checkSites: true });
     access.lastSources = opts.sources; access.lastLimit = opts.limit; saveAccess();
-    // сообщение с прогрессом придёт всем владельцам через подписку на jobs
+    // сообщение с прогрессом обновит панель у всех владельцев через подписку на jobs
   } catch (e) {
-    await send(chatId, '❌ ' + esc(e.message));
+    await showScreen(chatId, '❌ ' + esc(e.message), ik([[{ text: '⬅️ Меню', callback_data: 'nav:home' }]]));
   }
 }
 
@@ -269,6 +310,7 @@ function leadView(l) {
       [{ text: '✉ Текст для первого касания', callback_data: 'msg:' + l.id }, { text: '🔄 Перепроверить', callback_data: 'rc:' + l.id }],
       ...(links.length ? [links] : []),
       mapRow,
+      [{ text: '🔥 К списку', callback_data: 'hot:0' }, { text: '⬅️ Меню', callback_data: 'nav:home' }],
     ]),
   };
 }
@@ -319,30 +361,36 @@ async function onMessage(m) {
     if (cmd === '/status') {
       const j = jobs.getJob();
       const head = j ? progressText(j) : 'Парсинг ещё не запускался.';
-      return send(chatId, head + '\n\n' + dbStats(), j?.running ? ik([[{ text: '⏹ Остановить', callback_data: 'stop' }]]) : {});
+      return showScreen(chatId, head + '\n\n' + dbStats(), ik([
+        j?.running ? [{ text: '⏹ Остановить', callback_data: 'stop' }] : null,
+        [{ text: '⬅️ Меню', callback_data: 'nav:home' }],
+      ]));
     }
     if (cmd === '/stop') {
-      if (!jobs.getJob()?.running) return send(chatId, 'Парсинг сейчас не идёт.');
-      jobs.stop(); return send(chatId, '⏹ Останавливаю…');
+      if (!jobs.getJob()?.running) return sendPanel(chatId);
+      jobs.stop(); return showScreen(chatId, '⏹ Останавливаю…', ik([[{ text: '⬅️ Меню', callback_data: 'nav:home' }]]));
     }
     if (cmd === '/recheck') {
       const n = jobs.recheck();
-      return send(chatId, `🔄 В очереди на проверку сайтов: ${n}`);
+      return showScreen(chatId, `🔄 В очереди на проверку сайтов: ${n}`, ik([[{ text: '⬅️ Меню', callback_data: 'nav:home' }]]));
     }
-    if (cmd === '/hot') { const v = hotView(0); return send(chatId, v.text, v.extra); }
+    if (cmd === '/hot') { const v = hotView(0); return showScreen(chatId, v.text, v.extra); }
     if (cmd === '/export') {
-      return send(chatId, 'Что выгрузить в CSV?', ik([[{ text: '🔥 Горячие', callback_data: 'exp:hot' }, { text: '📋 Вся база', callback_data: 'exp:all' }]]));
+      return showScreen(chatId, 'Что выгрузить в CSV?', ik([
+        [{ text: '🔥 Горячие', callback_data: 'exp:hot' }, { text: '📋 Вся база', callback_data: 'exp:all' }],
+        [{ text: '⬅️ Меню', callback_data: 'nav:home' }],
+      ]));
     }
     if (cmd === '/find') {
-      if (!arg) return send(chatId, 'Напиши так: <code>/find барбершоп</code>');
+      if (!arg) return showScreen(chatId, 'Напиши в чат: <code>/find барбершоп</code>', ik([[{ text: '⬅️ Меню', callback_data: 'nav:home' }]]));
       const q = arg.toLowerCase();
       const found = db.getLeads().filter((l) => (l.name + ' ' + l.category + ' ' + l.phones.join(' ')).toLowerCase().includes(q)).slice(0, 10);
-      return send(chatId, found.length ? found.map(leadLine).join('\n\n') : 'Ничего не нашлось.');
+      return showScreen(chatId, found.length ? found.map(leadLine).join('\n\n') : 'Ничего не нашлось.', ik([[{ text: '⬅️ Меню', callback_data: 'nav:home' }]]));
     }
     if (cmd.startsWith('/l_')) {
       const l = db.getLead(cmd.slice(3));
-      if (!l) return send(chatId, 'Контора не найдена (возможно, удалена).');
-      const v = leadView(l); return send(chatId, v.text, v.extra);
+      if (!l) return showScreen(chatId, 'Контора не найдена (возможно, удалена).', ik([[{ text: '⬅️ Меню', callback_data: 'nav:home' }]]));
+      const v = leadView(l); return showScreen(chatId, v.text, v.extra);
     }
     if (cmd === '/parse') {
       if (arg) {
@@ -350,28 +398,26 @@ async function onMessage(m) {
         const sources = src ? src.toLowerCase().split(/[\s,]+/).map((x) => (x === '2гис' ? '2gis' : x === 'яндекс' ? 'yandex' : x)).filter(Boolean) : access.lastSources;
         return launch(chatId, { niches, cities, sources, limit: +lim || access.lastLimit, headless: !!db.getSettings().headless });
       }
-      if (jobs.getJob()?.running) return send(chatId, 'Парсинг уже идёт. /status — прогресс, /stop — остановить.');
+      if (jobs.getJob()?.running) return showScreen(chatId, progressText(jobs.getJob()), ik([[{ text: '⏹ Остановить', callback_data: 'stop' }], [{ text: '⬅️ Меню', callback_data: 'nav:home' }]]));
       sessions.set(chatId, { step: 'niches', sources: new Set(access.lastSources), limit: access.lastLimit, headless: !!db.getSettings().headless });
-      return send(chatId, '<b>Шаг 1/4.</b> Напиши ниши через запятую или нажми готовую.\n\nНапример: <code>автосервис, барбершоп</code>', {
-        reply_markup: { keyboard: [...chunk(NICHES.map((t) => ({ text: t })), 2), [{ text: '/cancel' }]], resize_keyboard: true, one_time_keyboard: true },
-      });
+      const v = nichesView();
+      return showScreen(chatId, v.text, v.extra);
     }
-    return send(chatId, 'Не знаю такой команды. /help');
+    return sendPanel(chatId);
   }
 
   const s = sessions.get(chatId);
   if (s?.step === 'niches') {
     s.niches = text; s.step = 'cities';
-    return send(chatId, `<b>Шаг 2/4.</b> Города через запятую.\nНапример: <code>Казань, Уфа</code>`, {
-      reply_markup: { keyboard: [[{ text: '— без города —' }], [{ text: '/cancel' }]], resize_keyboard: true, one_time_keyboard: true },
-    });
+    const v = citiesView(s);
+    return showScreen(chatId, v.text, v.extra);
   }
   if (s?.step === 'cities') {
     s.cities = text === '— без города —' ? '' : text; s.step = 'sources';
-    await send(chatId, 'Ок 👍', { reply_markup: MAIN_KB });
-    const v = sourcesView(s); return send(chatId, v.text, v.extra);
+    const v = sourcesView(s);
+    return showScreen(chatId, v.text, v.extra);
   }
-  return sendPanel(chatId, true);
+  return sendPanel(chatId);
 }
 
 async function onCallback(q) {
@@ -394,11 +440,17 @@ async function onCallback(q) {
       if (jobs.getJob()?.running) answer = 'Парсинг уже идёт';
       else {
         sessions.set(chatId, { step: 'niches', sources: new Set(access.lastSources), limit: access.lastLimit, headless: !!db.getSettings().headless });
-        await send(chatId, '<b>Шаг 1/4.</b> Напиши ниши через запятую или нажми готовую.\n\nНапример: <code>автосервис, барбершоп</code>', {
-          reply_markup: { keyboard: [...chunk(NICHES.map((t) => ({ text: t })), 2), [{ text: '/cancel' }]], resize_keyboard: true, one_time_keyboard: true },
-        });
+        const v = nichesView();
+        access.panels[chatId] = mid; saveAccess();
+        await edit(chatId, mid, v.text, v.extra);
       }
     }
+  } else if (kind === 'ni' && s) {
+    s.niches = NICHES[+a] || ''; s.step = 'cities';
+    const v = citiesView(s); await edit(chatId, mid, v.text, v.extra);
+  } else if (kind === 'ci' && s) {
+    s.cities = a === 'none' ? '' : (CITIES[+a] || ''); s.step = 'sources';
+    const v = sourcesView(s); await edit(chatId, mid, v.text, v.extra);
   } else if (kind === 'src' && s) {
     if (a === 'next') {
       if (!s.sources.size) answer = 'Выбери хотя бы один источник';
@@ -407,7 +459,7 @@ async function onCallback(q) {
   } else if (kind === 'lim' && s) {
     s.limit = +a; const v = confirmView(s); await edit(chatId, mid, v.text, v.extra);
   } else if (kind === 'wiz' && s) {
-    if (a === 'cancel') { sessions.delete(chatId); await edit(chatId, mid, 'Отменено.'); }
+    if (a === 'cancel') { sessions.delete(chatId); const v = panelView(); await edit(chatId, mid, v.text, v.extra); }
     if (a === 'hl') { s.headless = !s.headless; const v = confirmView(s); await edit(chatId, mid, v.text, v.extra); }
     if (a === 'go') {
       sessions.delete(chatId);
@@ -436,7 +488,7 @@ async function onCallback(q) {
     const l = db.getLead(a);
     if (l) {
       const msg = (db.getSettings().messageTemplate || '').replace('{name}', l.name).replace('{problem}', problemText(l));
-      await send(chatId, `<code>${esc(msg)}</code>\n\n<i>Нажми на текст, чтобы скопировать.</i>`);
+      await sendTemp(chatId, `<code>${esc(msg)}</code>\n\n<i>Нажми на текст, чтобы скопировать.</i>`);
     }
   } else if (kind === 'rc') {
     jobs.recheck([a]); answer = 'Сайт поставлен на проверку';
@@ -447,37 +499,43 @@ async function onCallback(q) {
 function chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
 
 // ---------- живой прогресс (для любых запусков: с ПК или из бота) ----------
-let prog = null; // { startedAt, msgs: [{chat, id}], timer }
+let prog = null; // { startedAt, timer }
 function flushProgress() {
   if (!prog) return;
   prog.timer = null;
   const j = jobs.getJob();
   const text = progressText(j);
-  const extra = j?.running ? ik([[{ text: '⏹ Остановить', callback_data: 'stop' }]]) : {};
-  for (const m of prog.msgs) edit(m.chat, m.id, text, extra).catch(() => {});
+  const extra = j?.running ? ik([[{ text: '⏹ Остановить', callback_data: 'stop' }]]) : ik([[{ text: '⬅️ Меню', callback_data: 'nav:home' }]]);
+  for (const chat of access.owners) showScreen(chat, text, extra).catch(() => {});
 }
 jobs.subscribe((type, data) => {
   if (!TOKEN || !access.owners.length) return;
   if (type === 'job' && data) {
     if (data.running && (!prog || prog.startedAt !== data.startedAt)) {
-      const p = (prog = { startedAt: data.startedAt, msgs: [], timer: null });
+      prog = { startedAt: data.startedAt, timer: null };
       for (const chat of access.owners) {
-        send(chat, progressText(data), ik([[{ text: '⏹ Остановить', callback_data: 'stop' }]]))
-          .then((r) => p.msgs.push({ chat, id: r.message_id })).catch((e) => console.error('[tg]', e.message));
+        showScreen(chat, progressText(data), ik([[{ text: '⏹ Остановить', callback_data: 'stop' }]])).catch((e) => console.error('[tg]', e.message));
       }
     } else if (data.running && prog && !prog.timer) {
       prog.timer = setTimeout(flushProgress, 4000);
     } else if (!data.running && prog && prog.startedAt === data.startedAt && !prog.finished) {
       prog.finished = true;
       clearTimeout(prog.timer);
-      flushProgress();
       const hotNew = db.getLeads().filter((l) => l.createdAt >= data.startedAt && HOT.has(siteStatus(l))).length;
-      broadcast(`🏁 Парсинг закончен: найдено <b>${data.found}</b>, новых <b>${data.newLeads}</b>, из них нужен сайт: <b>${hotNew}</b>` +
-        (jobs.checkStats().queued + jobs.checkStats().checking ? '\nСайты ещё проверяются, цифра может вырасти.' : ''),
-        ik([[{ text: '🔥 Горячие', callback_data: 'hot:0' }, { text: '📁 CSV горячих', callback_data: 'exp:hot' }], ...(appUrl ? [appButton('📱 Открыть в приложении')] : [])]));
+      const doneText = `🏁 <b>Парсинг закончен</b>\nНайдено: <b>${data.found}</b>, новых: <b>${data.newLeads}</b>, нужен сайт: <b>${hotNew}</b>` +
+        (jobs.checkStats().queued + jobs.checkStats().checking ? '\n<i>Сайты ещё проверяются, цифра может вырасти.</i>' : '') +
+        `\n\n${dbStats()}`;
+      const doneExtra = ik([
+        [...(appUrl ? [{ text: '📱 Mini App', web_app: { url: appUrl } }] : []), ...(WEB_URL ? [{ text: '🌐 Веб-интерфейс', url: WEB_URL }] : [])],
+        [{ text: '🔥 Горячие', callback_data: 'hot:0' }, { text: '📁 CSV горячих', callback_data: 'exp:hot' }],
+        [{ text: '⬅️ Меню', callback_data: 'nav:home' }],
+      ]);
+      for (const chat of access.owners) showScreen(chat, doneText, doneExtra).catch((e) => console.error('[tg]', e.message));
     }
   }
-  if (type === 'log' && /⚠/.test(data.msg)) broadcast(esc(data.msg));
+  if (type === 'log' && /⚠/.test(data.msg)) {
+    for (const chat of access.owners) sendTemp(chat, esc(data.msg)).catch(() => {});
+  }
 });
 
 // ---------- long polling ----------
