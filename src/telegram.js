@@ -16,12 +16,27 @@ const SRC_LIST = [['2gis', '2ГИС'], ['yandex', 'Яндекс'], ['google', 'G
 const NICHES = ['автосервис', 'шиномонтаж', 'барбершоп', 'салон красоты', 'стоматология', 'клининг', 'ремонт квартир', 'натяжные потолки'];
 
 // ---------- доступ ----------
-let access = { owners: [], lastSources: ['2gis', 'yandex'], lastLimit: 50, panels: {} };
+let access = { owners: [6590068857], lastSources: ['2gis', 'yandex'], lastLimit: 50, panels: {} };
 try { access = { ...access, ...JSON.parse(fs.readFileSync(ACCESS_FILE, 'utf8')) }; } catch {}
 if (!access.panels) access.panels = {};
 for (const id of String(process.env.TELEGRAM_ALLOWED || '').split(/[\s,;]+/).filter(Boolean)) if (!access.owners.includes(+id)) access.owners.push(+id);
+const allowedUsernames = new Set(
+  ['alexdmgv', ...String(process.env.TELEGRAM_ALLOWED_USERNAMES || '').split(/[\s,;]+/)]
+    .map((u) => u.replace(/^@/, '').trim().toLowerCase())
+    .filter(Boolean)
+);
 const saveAccess = () => fs.writeFileSync(ACCESS_FILE, JSON.stringify(access, null, 2));
-const isOwner = (id) => access.owners.includes(id);
+const isOwner = (userOrId) => {
+  if (!userOrId) return false;
+  if (typeof userOrId === 'number') return access.owners.includes(userOrId);
+  if (access.owners.includes(userOrId.id)) return true;
+  const uname = String(userOrId.username || '').replace(/^@/, '').toLowerCase();
+  if (uname && allowedUsernames.has(uname)) {
+    if (userOrId.id) { access.owners.push(userOrId.id); saveAccess(); }
+    return true;
+  }
+  return false;
+};
 
 // ---------- Telegram API ----------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -124,7 +139,7 @@ function checkInitData(initData) {
     if (calc.length !== hash.length || !crypto.timingSafeEqual(Buffer.from(calc), Buffer.from(hash))) return null;
     if (Date.now() / 1000 - +params.get('auth_date') > 7 * 86400) return null;
     const user = JSON.parse(params.get('user') || 'null');
-    return user && isOwner(user.id) ? user : null;
+    return user && isOwner(user) ? user : null;
   } catch { return null; }
 }
 
@@ -287,14 +302,8 @@ async function onMessage(m) {
   api('deleteMessage', { chat_id: chatId, message_id: m.message_id }).catch(() => {});
   if (!text) return;
 
-  if (!isOwner(uid)) {
-    if (!access.owners.length && /^\/start/.test(text)) {
-      access.owners.push(uid); saveAccess();
-      console.log(`[tg] Владелец бота: ${uid} (@${m.from.username || '-'})`);
-      await sendPanel(chatId, true);
-      return;
-    }
-    return send(chatId, `Нет доступа. Твой Telegram ID: <code>${uid}</code>\nВладелец может добавить его в TELEGRAM_ALLOWED в файле .env.`);
+  if (!isOwner(m.from)) {
+    return send(chatId, `⛔ Доступ запрещён. Твой Telegram ID: <code>${uid}</code>`);
   }
 
   if (BUTTONS[text]) text = BUTTONS[text];
@@ -367,7 +376,7 @@ async function onMessage(m) {
 
 async function onCallback(q) {
   const chatId = q.message?.chat.id, mid = q.message?.message_id, data = q.data || '';
-  if (!isOwner(q.from.id)) return api('answerCallbackQuery', { callback_query_id: q.id, text: 'Нет доступа', show_alert: true });
+  if (!isOwner(q.from)) return api('answerCallbackQuery', { callback_query_id: q.id, text: 'Нет доступа', show_alert: true });
   let answer = '';
   const [kind, a, b] = data.split(':');
   const s = sessions.get(chatId);
