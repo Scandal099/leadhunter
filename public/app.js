@@ -12,7 +12,119 @@ const S = {
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const CLOUD_DEFAULTS = {
+  twogisDomain: '2gis.ru',
+  yandexDomain: 'yandex.ru',
+  delayMs: 1200,
+  siteCheckConcurrency: 6,
+  supabaseUrl: 'https://mahpmhesnbgdmqvcddul.supabase.co',
+  supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1haHBtaGVzbmJnZG1xdmNkZHVsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4MzMwMzUsImV4cCI6MjExMDQwOTAzNX0.tzSJ58FPrQ_HEK_3y4AW4jwmR_ENpS7dKN7lJ91FhxU',
+  messageTemplate: 'Здравствуйте! Нашёл вашу компанию «{name}» на картах. {problem} Я делаю современные сайты под ключ — быстро, с адаптивом под телефоны и формой заявки. Могу показать пару примеров и прислать бесплатный макет главной страницы. Интересно?',
+};
+
+let CLOUD_ONLY = false;
+let cloudLastTs = 0;
+let cloudLastSyncAt = 0;
+let cloudLastErr = null;
+
+function getCloudSettings() {
+  try { return { ...CLOUD_DEFAULTS, ...JSON.parse(localStorage.getItem('lh-cloud-settings') || '{}') }; }
+  catch { return { ...CLOUD_DEFAULTS }; }
+}
+
+async function sbFetch(path, options = {}) {
+  const cfg = getCloudSettings();
+  const base = String(cfg.supabaseUrl || '').trim().replace(/\/+$/, '');
+  const key = String(cfg.supabaseKey || '').trim();
+  if (!base || !key) throw new Error('Не указаны Supabase URL или Key в Настройках');
+  const r = await fetch(`${base}/rest/v1/${path}`, {
+    ...options,
+    headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...options.headers },
+  });
+  const text = await r.text();
+  let j = null;
+  try { j = text ? JSON.parse(text) : null; } catch {}
+  if (!r.ok) throw new Error(j?.message || j?.error || text || r.statusText);
+  return j;
+}
+
+async function cloudFetchRows(sinceTs = 0) {
+  const all = [];
+  let offset = 0;
+  const filter = sinceTs > 0 ? `updated_at=gt.${sinceTs}` : 'deleted=eq.false';
+  while (true) {
+    const rows = await sbFetch(`leads?select=id,data,updated_at,deleted&${filter}&order=updated_at.asc`, {
+      headers: { Range: `${offset}-${offset + 999}` },
+    });
+    if (!Array.isArray(rows) || !rows.length) break;
+    all.push(...rows);
+    if (rows.length < 1000) break;
+    offset += 1000;
+  }
+  return all;
+}
+
+async function cloudApi(url, opts = {}) {
+  const body = opts.body || {};
+  if (url === '/api/settings') {
+    if (opts.method === 'POST') {
+      const next = { ...getCloudSettings(), ...body };
+      localStorage.setItem('lh-cloud-settings', JSON.stringify(next));
+      return next;
+    }
+    return getCloudSettings();
+  }
+  if (url === '/api/leads') {
+    const rows = await cloudFetchRows(0);
+    cloudLastTs = rows.reduce((m, r) => Math.max(m, r.updated_at || 0), 0) || Date.now();
+    cloudLastSyncAt = Date.now();
+    cloudLastErr = null;
+    return rows.filter((r) => !r.deleted && r.data?.id).map((r) => r.data);
+  }
+  if (url.startsWith('/api/leads/') && opts.method === 'PATCH') {
+    const id = url.split('/').pop();
+    const l = S.byId.get(id);
+    if (!l) throw new Error('Лид не найден');
+    const updated = { ...l, ...body, updatedAt: Date.now() };
+    await sbFetch('leads?on_conflict=id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify([{ id: updated.id, data: updated, updated_at: updated.updatedAt, deleted: false }]),
+    });
+    return updated;
+  }
+  if (url === '/api/leads/delete' && opts.method === 'POST') {
+    const ids = body.ids || [];
+    const now = Date.now();
+    for (let i = 0; i < ids.length; i += 200) {
+      const chunk = ids.slice(i, i + 200).map((id) => ({ id, data: {}, updated_at: now, deleted: true }));
+      await sbFetch('leads?on_conflict=id', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify(chunk),
+      });
+    }
+    return { ok: true };
+  }
+  if (url === '/api/cloud/status' || url === '/api/cloud/sync') {
+    if (url === '/api/cloud/sync') {
+      const rows = await cloudFetchRows(0);
+      cloudLastTs = rows.reduce((m, r) => Math.max(m, r.updated_at || 0), 0) || Date.now();
+      cloudLastSyncAt = Date.now();
+      cloudLastErr = null;
+      setLeads(rows.filter((r) => !r.deleted && r.data?.id).map((r) => r.data));
+    }
+    return { enabled: true, connected: !cloudLastErr, lastSyncAt: cloudLastSyncAt, error: cloudLastErr, totalLeads: S.leads.length };
+  }
+  if (url === '/api/parse' || url === '/api/recheck' || url === '/api/stop') {
+    throw new Error('Запуск парсера доступен только в LeadHunter.exe на ПК');
+  }
+  return {};
+}
+
 const api = async (url, opts = {}) => {
+  if (CLOUD_ONLY) return cloudApi(url, opts);
   const r = await fetch(url, { headers: { 'content-type': 'application/json' }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
@@ -290,19 +402,38 @@ $('#btn-select-all').addEventListener('click', () => {
   list.forEach((l) => (all ? S.selected.delete(l.id) : S.selected.add(l.id)));
   render();
 });
-$('#btn-export').addEventListener('click', () => { location.href = '/api/export.csv?ids=' + applyFilters().map((l) => l.id).join(','); });
+function exportLeadsCsv(list) {
+  if (CLOUD_ONLY) {
+    const q = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const header = ['Название', 'Ниша', 'Город', 'Адрес', 'Телефоны', 'Сайт', 'Состояние', 'Статус', 'Контакт', 'Заметка'].map(q).join(';');
+    const rows = list.map((l) => [
+      l.name, l.niche || l.category, l.city, l.address, (l.phones || []).join(', '),
+      l.website, SITE[siteStatus(l)]?.t || '', STATUS[l.status] || l.status, l.contactPerson, l.note,
+    ].map(q).join(';'));
+    const blob = new Blob(['\uFEFF' + [header, ...rows].join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    return;
+  }
+  location.href = '/api/export.csv?ids=' + list.map((l) => l.id).join(',');
+}
+$('#btn-export').addEventListener('click', () => exportLeadsCsv(applyFilters()));
 $('#btn-recheck').addEventListener('click', async () => {
-  const ids = applyFilters().map((l) => l.id);
-  const r = await api('/api/recheck', { method: 'POST', body: { ids } });
-  toast(`Проверяю ${r.queued} сайтов`);
+  try {
+    const ids = applyFilters().map((l) => l.id);
+    const r = await api('/api/recheck', { method: 'POST', body: { ids } });
+    toast(`Проверяю ${r.queued} сайтов`);
+  } catch (e) { toast(e.message); }
 });
 $('#bulkbar').addEventListener('click', async (e) => {
   const a = e.target.dataset.bulk; if (!a) return;
   const ids = [...S.selected];
   if (a === 'clear') S.selected.clear();
   if (a === 'base' || a === 'reject') { for (const id of ids) await patch(id, { status: a }); toast('Готово'); S.selected.clear(); }
-  if (a === 'recheck') { await api('/api/recheck', { method: 'POST', body: { ids } }); toast('Проверяю сайты'); }
-  if (a === 'export') location.href = '/api/export.csv?ids=' + ids.join(',');
+  if (a === 'recheck') { try { await api('/api/recheck', { method: 'POST', body: { ids } }); toast('Проверяю сайты'); } catch (err) { toast(err.message); } }
+  if (a === 'export') exportLeadsCsv(S.leads.filter((l) => S.selected.has(l.id)));
   if (a === 'delete') {
     if (!confirm(`Удалить ${ids.length} записей из базы?`)) return;
     await api('/api/leads/delete', { method: 'POST', body: { ids } });
@@ -488,12 +619,65 @@ $('#btn-copy-sql')?.addEventListener('click', () => {
 
 // ---------- Старт ----------
 (async function init() {
-  const [leads, settings, jobInfo] = await Promise.all([api('/api/leads'), api('/api/settings'), api('/api/job')]);
+  let jobInfo = null;
+  try {
+    const r = await fetch('/api/job');
+    const ct = r.headers.get('content-type') || '';
+    if (!r.ok || !ct.includes('application/json')) throw new Error('no backend');
+    jobInfo = await r.json();
+  } catch {
+    CLOUD_ONLY = true;
+  }
+
+  const [leads, settings] = await Promise.all([api('/api/leads'), api('/api/settings')]);
   setLeads(leads); S.settings = settings;
-  renderJob(jobInfo.job); jobInfo.logs.forEach(addLog);
+  if (jobInfo) {
+    renderJob(jobInfo.job);
+    (jobInfo.logs || []).forEach(addLog);
+  }
   $("#grid").classList.add("intro"); render(); setTimeout(() => $("#grid").classList.remove("intro"), 1200);
   const v = location.hash.slice(1);
-  if (v && $('#view-' + v)) go(v); else if (!leads.length) go('parser');
+  if (v && $('#view-' + v)) go(v); else if (!leads.length && !CLOUD_ONLY) go('parser');
+
+  if (CLOUD_ONLY) {
+    const notice = document.createElement('div');
+    notice.className = 'statline';
+    notice.style.marginBottom = '12px';
+    notice.innerHTML = '<span class="dot d-constructor"></span><span>Веб-режим (GitHub Pages): общая База и Воронка работают 24/7 через Supabase. Для запуска парсинга открой <b>LeadHunter.exe</b> на ПК.</span>';
+    $('#view-parser .panel')?.prepend(notice);
+    $('#btn-start').disabled = true;
+
+    setInterval(async () => {
+      try {
+        const rows = await cloudFetchRows(cloudLastTs);
+        if (!rows.length) return;
+        let changed = false;
+        for (const row of rows) {
+          if (row.updated_at > cloudLastTs) cloudLastTs = row.updated_at;
+          if (row.deleted) {
+            if (S.byId.has(row.id)) {
+              S.leads = S.leads.filter((l) => l.id !== row.id);
+              S.byId.delete(row.id);
+              S.selected.delete(row.id);
+              changed = true;
+            }
+          } else if (row.data?.id) {
+            const cur = S.byId.get(row.data.id);
+            if (!cur || (row.data.updatedAt || row.updated_at) > (cur.updatedAt || 0)) {
+              if (upsertLocal(row.data)) flashIds.add(row.data.id);
+              changed = true;
+            }
+          }
+        }
+        cloudLastSyncAt = Date.now();
+        cloudLastErr = null;
+        if (changed) scheduleRender();
+      } catch (e) {
+        cloudLastErr = e.message;
+      }
+    }, 5000);
+    return;
+  }
 
   const es = new EventSource('/api/events');
   es.addEventListener('job', (e) => renderJob(JSON.parse(e.data)));
