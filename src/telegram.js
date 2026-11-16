@@ -81,9 +81,9 @@ function panelView() {
   const statusLine = j?.running
     ? `\n⏳ <b>Парсинг идёт:</b> ${j.done}/${j.total} · Найдено ${j.found} (новых ${j.newLeads})`
     : '';
-  const topRow = [];
-  if (appUrl) topRow.push({ text: '📱 Mini App', web_app: { url: appUrl } });
-  if (WEB_URL) topRow.push({ text: '🌐 Веб-интерфейс', url: WEB_URL });
+  const topRow = [
+    { text: '📱 Открыть приложение', web_app: { url: appUrl || WEB_URL } },
+  ];
   const rows = [
     topRow.length ? topRow : null,
     [{ text: '🚀 Парсинг', callback_data: 'nav:parse' }, { text: '🔥 Горячие', callback_data: 'hot:0' }],
@@ -580,6 +580,9 @@ async function start() {
       { command: 'stop', description: 'Остановить парсинг' },
       { command: 'help', description: 'Справка' },
     ] }).catch(() => {});
+    if (appUrl || WEB_URL) {
+      await api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'LeadHunter', web_app: { url: appUrl || WEB_URL } } }).catch(() => {});
+    }
     for (const chatId of access.owners) sendPanel(chatId, false).catch(() => {});
   } catch (e) {
     console.error('[tg] Не удалось подключиться к Telegram:', e.message, '— буду пробовать дальше');
