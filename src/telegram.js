@@ -16,8 +16,9 @@ const SRC_LIST = [['2gis', '2ГИС'], ['yandex', 'Яндекс'], ['google', 'G
 const NICHES = ['автосервис', 'шиномонтаж', 'барбершоп', 'салон красоты', 'стоматология', 'клининг', 'ремонт квартир', 'натяжные потолки'];
 
 // ---------- доступ ----------
-let access = { owners: [], lastSources: ['2gis', 'yandex'], lastLimit: 50 };
+let access = { owners: [], lastSources: ['2gis', 'yandex'], lastLimit: 50, panels: {} };
 try { access = { ...access, ...JSON.parse(fs.readFileSync(ACCESS_FILE, 'utf8')) }; } catch {}
+if (!access.panels) access.panels = {};
 for (const id of String(process.env.TELEGRAM_ALLOWED || '').split(/[\s,;]+/).filter(Boolean)) if (!access.owners.includes(+id)) access.owners.push(+id);
 const saveAccess = () => fs.writeFileSync(ACCESS_FILE, JSON.stringify(access, null, 2));
 const isOwner = (id) => access.owners.includes(id);
@@ -52,9 +53,46 @@ async function sendDocument(chat_id, filename, content, caption) {
   if (!j.ok) throw new Error(j.description);
 }
 
-// ---------- Mini App ----------
+// ---------- Mini App & Панель ----------
+const WEB_URL = (process.env.WEB_URL || 'https://scandal099.github.io/leadhunter/').trim();
 let appUrl = '';
-const appButton = (text = '📱 Открыть приложение') => (appUrl ? [{ text, web_app: { url: appUrl } }] : null);
+const appButton = (text = '📱 Mini App') => (appUrl ? [{ text, web_app: { url: appUrl } }] : null);
+
+function ik(rows) { return { reply_markup: { inline_keyboard: rows.filter(Boolean) } }; }
+
+function panelView() {
+  const j = jobs.getJob();
+  const statusLine = j?.running
+    ? `\n⏳ <b>Парсинг идёт:</b> ${j.done}/${j.total} · Найдено ${j.found} (новых ${j.newLeads})`
+    : '';
+  const topRow = [];
+  if (appUrl) topRow.push({ text: '📱 Mini App', web_app: { url: appUrl } });
+  if (WEB_URL) topRow.push({ text: '🌐 Веб-интерфейс', url: WEB_URL });
+  const rows = [
+    topRow.length ? topRow : null,
+    [{ text: '🚀 Парсинг', callback_data: 'nav:parse' }, { text: '🔥 Горячие', callback_data: 'hot:0' }],
+    [{ text: '📊 Статус', callback_data: 'nav:status' }, { text: '📁 Экспорт CSV', callback_data: 'exp:hot' }],
+    [
+      { text: '🔄 Проверить сайты', callback_data: 'nav:recheck' },
+      ...(j?.running ? [{ text: '⏹ Стоп', callback_data: 'stop' }] : []),
+    ],
+  ];
+  return {
+    text: `⚡ <b>LeadHunter</b> — управление и база\n\n${dbStats()}${statusLine}`,
+    extra: ik(rows),
+  };
+}
+
+async function sendPanel(chatId, forceNew = false) {
+  const v = panelView();
+  const oldId = access.panels?.[chatId];
+  if (!forceNew && oldId) {
+    try { await edit(chatId, oldId, v.text, v.extra); return; } catch {}
+  }
+  if (oldId) api('deleteMessage', { chat_id: chatId, message_id: oldId }).catch(() => {});
+  const r = await send(chatId, v.text, v.extra);
+  if (r?.message_id) { access.panels[chatId] = r.message_id; saveAccess(); }
+}
 
 async function setAppUrl(url) {
   appUrl = url;
@@ -63,6 +101,7 @@ async function setAppUrl(url) {
     try {
       await api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'LeadHunter', web_app: { url } } });
       console.log('  Мини-апп подключён к кнопке меню бота');
+      for (const chatId of access.owners) sendPanel(chatId, false).catch(() => {});
       return;
     } catch (e) {
       console.error(`[tg] Не удалось поставить кнопку мини-аппа (попытка ${i}):`, e.message);
@@ -106,7 +145,7 @@ const MAIN_KB = {
   is_persistent: true,
 };
 const BUTTONS = { '🚀 Парсинг': '/parse', '📊 Статус': '/status', '🔥 Горячие': '/hot', '📁 Экспорт': '/export', '🔄 Проверить сайты': '/recheck', '⏹ Стоп': '/stop' };
-const ik = (rows) => ({ reply_markup: { inline_keyboard: rows } });
+// ---------- инлайн-мастер ----------
 
 // ---------- мастер запуска парсинга ----------
 const sessions = new Map(); // chatId -> { step, niches, cities, sources:Set, limit, headless }
@@ -175,7 +214,7 @@ function hotView(page) {
   const list = hotLeads();
   const pages = Math.max(1, Math.ceil(list.length / PAGE));
   page = Math.min(Math.max(0, page), pages - 1);
-  if (!list.length) return { text: '🔥 Горячих необработанных контор нет. Запусти парсинг 🚀', extra: {} };
+  if (!list.length) return { text: '🔥 Горячих необработанных контор нет. Запусти парсинг 🚀', extra: ik([[{ text: '⬅️ Меню', callback_data: 'nav:home' }]]) };
   const items = list.slice(page * PAGE, page * PAGE + PAGE);
   const nav = [];
   if (page > 0) nav.push({ text: '◀', callback_data: 'hot:' + (page - 1) });
@@ -183,7 +222,7 @@ function hotView(page) {
   if (page < pages - 1) nav.push({ text: '▶', callback_data: 'hot:' + (page + 1) });
   return {
     text: `🔥 <b>Нужен сайт</b> — ${list.length} контор (без взятых в работу)\n\n` + items.map(leadLine).join('\n\n'),
-    extra: ik([nav]),
+    extra: ik([nav, [{ text: '⬅️ Меню', callback_data: 'nav:home' }]]),
   };
 }
 
@@ -244,14 +283,15 @@ const HELP = `<b>LeadHunter в Telegram</b>
 async function onMessage(m) {
   const chatId = m.chat.id, uid = m.from?.id;
   let text = (m.text || '').trim();
-  if (!text || m.chat.type !== 'private') return;
+  if (m.chat.type !== 'private') return;
+  api('deleteMessage', { chat_id: chatId, message_id: m.message_id }).catch(() => {});
+  if (!text) return;
 
   if (!isOwner(uid)) {
     if (!access.owners.length && /^\/start/.test(text)) {
       access.owners.push(uid); saveAccess();
       console.log(`[tg] Владелец бота: ${uid} (@${m.from.username || '-'})`);
-      await send(chatId, '🔐 Ты привязан как владелец бота. Остальным доступ закрыт.\n\n' + HELP, { reply_markup: MAIN_KB });
-      if (appUrl) await send(chatId, '📱 Открой приложение:', ik([appButton()]));
+      await sendPanel(chatId, true);
       return;
     }
     return send(chatId, `Нет доступа. Твой Telegram ID: <code>${uid}</code>\nВладелец может добавить его в TELEGRAM_ALLOWED в файле .env.`);
@@ -264,12 +304,9 @@ async function onMessage(m) {
 
   if (cmd) {
     if (cmd !== '/parse') sessions.delete(chatId);
-    if (cmd === '/start' || cmd === '/help' || cmd === '/app') {
-      if (cmd !== '/app') await send(chatId, HELP, { reply_markup: MAIN_KB });
-      return send(chatId, appUrl ? '📱 Всё то же самое, но удобнее, — в приложении:' : '📱 Приложение ещё запускается, попробуй /app через минуту.',
-        appUrl ? ik([appButton()]) : {});
+    if (cmd === '/start' || cmd === '/help' || cmd === '/app' || cmd === '/cancel') {
+      return sendPanel(chatId, true);
     }
-    if (cmd === '/cancel') return send(chatId, 'Отменено.', { reply_markup: MAIN_KB });
     if (cmd === '/status') {
       const j = jobs.getJob();
       const head = j ? progressText(j) : 'Парсинг ещё не запускался.';
@@ -325,7 +362,7 @@ async function onMessage(m) {
     await send(chatId, 'Ок 👍', { reply_markup: MAIN_KB });
     const v = sourcesView(s); return send(chatId, v.text, v.extra);
   }
-  return send(chatId, 'Выбери действие на клавиатуре или /help', { reply_markup: MAIN_KB });
+  return sendPanel(chatId, true);
 }
 
 async function onCallback(q) {
@@ -335,7 +372,25 @@ async function onCallback(q) {
   const [kind, a, b] = data.split(':');
   const s = sessions.get(chatId);
 
-  if (kind === 'src' && s) {
+  if (kind === 'nav') {
+    if (a === 'home' || a === 'status') {
+      const v = panelView();
+      access.panels[chatId] = mid; saveAccess();
+      await edit(chatId, mid, v.text, v.extra);
+      if (a === 'status') answer = 'Статус обновлён';
+    } else if (a === 'recheck') {
+      const n = jobs.recheck();
+      answer = n ? `В очереди на проверку: ${n}` : 'Нет сайтов для проверки';
+    } else if (a === 'parse') {
+      if (jobs.getJob()?.running) answer = 'Парсинг уже идёт';
+      else {
+        sessions.set(chatId, { step: 'niches', sources: new Set(access.lastSources), limit: access.lastLimit, headless: !!db.getSettings().headless });
+        await send(chatId, '<b>Шаг 1/4.</b> Напиши ниши через запятую или нажми готовую.\n\nНапример: <code>автосервис, барбершоп</code>', {
+          reply_markup: { keyboard: [...chunk(NICHES.map((t) => ({ text: t })), 2), [{ text: '/cancel' }]], resize_keyboard: true, one_time_keyboard: true },
+        });
+      }
+    }
+  } else if (kind === 'src' && s) {
     if (a === 'next') {
       if (!s.sources.size) answer = 'Выбери хотя бы один источник';
       else { s.step = 'confirm'; const v = confirmView(s); await edit(chatId, mid, v.text, v.extra); }
@@ -458,6 +513,7 @@ async function start() {
       { command: 'stop', description: 'Остановить парсинг' },
       { command: 'help', description: 'Справка' },
     ] }).catch(() => {});
+    for (const chatId of access.owners) sendPanel(chatId, false).catch(() => {});
   } catch (e) {
     console.error('[tg] Не удалось подключиться к Telegram:', e.message, '— буду пробовать дальше');
     if (e.code === 401) { running = false; return; }
