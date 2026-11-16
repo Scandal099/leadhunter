@@ -637,15 +637,13 @@ $('#btn-copy-sql')?.addEventListener('click', () => {
   }
   $("#grid").classList.add("intro"); render(); setTimeout(() => $("#grid").classList.remove("intro"), 1200);
   const v = location.hash.slice(1);
-  if (v && $('#view-' + v)) go(v); else if (!leads.length && !CLOUD_ONLY) go('parser');
+  if (v && $('#view-' + v) && !(CLOUD_ONLY && v === 'parser')) go(v); else if (!leads.length && !CLOUD_ONLY) go('parser');
 
   if (CLOUD_ONLY) {
-    const notice = document.createElement('div');
-    notice.className = 'statline';
-    notice.style.marginBottom = '12px';
-    notice.innerHTML = '<span class="dot d-constructor"></span><span>Веб-режим (GitHub Pages): общая База и Воронка работают 24/7 через Supabase. Для запуска парсинга открой <b>LeadHunter.exe</b> на ПК.</span>';
-    $('#view-parser .panel')?.prepend(notice);
-    $('#btn-start').disabled = true;
+    $('.nav-btn[data-view="parser"]')?.classList.add('hidden');
+    $('#view-parser')?.classList.add('hidden');
+    $('#btn-recheck')?.classList.add('hidden');
+    $('[data-bulk="recheck"]')?.classList.add('hidden');
 
     setInterval(async () => {
       try {
