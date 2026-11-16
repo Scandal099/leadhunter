@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const db = require('./db');
 const jobs = require('./jobs');
-const { STATUS_RU, LEAD_STATUS, HOT, siteStatus, score, problemText, toCsv } = require('./leadUtil');
+const { STATUS_RU, LEAD_STATUS, HOT, siteStatus, score, problemText, toCsv, toMarkdown } = require('./leadUtil');
 const { mapLinks } = require('../public/maplinks');
 
 const TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -59,11 +59,11 @@ const edit = (chat_id, message_id, text, extra = {}) =>
     .catch((e) => { if (!/not modified/.test(e.message)) throw e; });
 const broadcast = (text, extra) => Promise.all(access.owners.map((id) => send(id, text, extra).catch((e) => console.error('[tg]', e.message))));
 
-async function sendDocument(chat_id, filename, content, caption) {
+async function sendDocument(chat_id, filename, content, caption, mime = 'text/csv') {
   const fd = new FormData();
   fd.append('chat_id', String(chat_id));
   if (caption) fd.append('caption', caption);
-  fd.append('document', new Blob([content], { type: 'text/csv' }), filename);
+  fd.append('document', new Blob([content], { type: mime }), filename);
   const r = await fetch(API + 'sendDocument', { method: 'POST', body: fd, signal: AbortSignal.timeout(60000) });
   const j = await r.json();
   if (!j.ok) throw new Error(j.description);
@@ -87,7 +87,7 @@ function panelView() {
   const rows = [
     topRow.length ? topRow : null,
     [{ text: '🚀 Парсинг', callback_data: 'nav:parse' }, { text: '🔥 Горячие', callback_data: 'hot:0' }],
-    [{ text: '📊 Статус', callback_data: 'nav:status' }, { text: '📁 Экспорт CSV', callback_data: 'exp:hot' }],
+    [{ text: '📊 Статус', callback_data: 'nav:status' }, { text: '📁 Экспорт / .md', callback_data: 'nav:export' }],
     [
       { text: '🔄 Проверить сайты', callback_data: 'nav:recheck' },
       ...(j?.running ? [{ text: '⏹ Стоп', callback_data: 'stop' }] : []),
@@ -376,8 +376,9 @@ async function onMessage(m) {
     }
     if (cmd === '/hot') { const v = hotView(0); return showScreen(chatId, v.text, v.extra); }
     if (cmd === '/export') {
-      return showScreen(chatId, 'Что выгрузить в CSV?', ik([
-        [{ text: '🔥 Горячие', callback_data: 'exp:hot' }, { text: '📋 Вся база', callback_data: 'exp:all' }],
+      return showScreen(chatId, 'Что выгрузить?', ik([
+        [{ text: '🔥 Горячие (CSV)', callback_data: 'exp:hot' }, { text: '📋 Вся база (CSV)', callback_data: 'exp:all' }],
+        [{ text: '🤖 Горячие (.md для ИИ)', callback_data: 'exp:md_hot' }, { text: '🤖 Воронка (.md для ИИ)', callback_data: 'exp:md_funnel' }],
         [{ text: '⬅️ Меню', callback_data: 'nav:home' }],
       ]));
     }
@@ -433,6 +434,12 @@ async function onCallback(q) {
       access.panels[chatId] = mid; saveAccess();
       await edit(chatId, mid, v.text, v.extra);
       if (a === 'status') answer = 'Статус обновлён';
+    } else if (a === 'export') {
+      await edit(chatId, mid, 'Что выгрузить?', ik([
+        [{ text: '🔥 Горячие (CSV)', callback_data: 'exp:hot' }, { text: '📋 Вся база (CSV)', callback_data: 'exp:all' }],
+        [{ text: '🤖 Горячие (.md для ИИ)', callback_data: 'exp:md_hot' }, { text: '🤖 Воронка (.md для ИИ)', callback_data: 'exp:md_funnel' }],
+        [{ text: '⬅️ Меню', callback_data: 'nav:home' }],
+      ]));
     } else if (a === 'recheck') {
       const n = jobs.recheck();
       answer = n ? `В очереди на проверку: ${n}` : 'Нет сайтов для проверки';
@@ -473,11 +480,22 @@ async function onCallback(q) {
   } else if (kind === 'hot') {
     const v = hotView(+a); await edit(chatId, mid, v.text, v.extra);
   } else if (kind === 'exp') {
-    const list = a === 'hot' ? hotLeads() : db.getLeads();
+    const isMd = a.startsWith('md_');
+    const list = a === 'hot' || a === 'md_hot'
+      ? hotLeads()
+      : a === 'md_funnel'
+        ? db.getLeads().filter((l) => l.status === 'base' || l.status === 'work' || l.status === 'client')
+        : db.getLeads();
     if (!list.length) answer = 'Нечего выгружать';
     else {
       await api('answerCallbackQuery', { callback_query_id: q.id, text: 'Готовлю файл…' });
-      await sendDocument(chatId, `leads-${a}-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(list, db.getSettings()), `${a === 'hot' ? 'Горячие' : 'Вся база'}: ${list.length} шт.`);
+      const date = new Date().toISOString().slice(0, 10);
+      if (isMd) {
+        const title = a === 'md_funnel' ? 'Выгрузка из воронки для нейросети' : 'Горячие лиды для нейросети';
+        await sendDocument(chatId, `leads-ai-${date}.md`, toMarkdown(list, db.getSettings(), title), `🤖 ${title}: ${list.length} шт.`, 'text/markdown');
+      } else {
+        await sendDocument(chatId, `leads-${a}-${date}.csv`, toCsv(list, db.getSettings()), `${a === 'hot' ? 'Горячие' : 'Вся база'}: ${list.length} шт.`);
+      }
       return;
     }
   } else if (kind === 'st') {
