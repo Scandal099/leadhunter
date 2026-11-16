@@ -176,6 +176,9 @@ $$('.nav-btn').forEach((b) => b.addEventListener('click', () => go(b.dataset.vie
 function setLeads(list) {
   S.leads = list;
   S.byId = new Map(list.map((l) => [l.id, l]));
+  if (CLOUD_ONLY) {
+    try { localStorage.setItem('lh-cloud-cache', JSON.stringify(list)); } catch {}
+  }
 }
 function upsertLocal(l) {
   const isNew = !S.byId.has(l.id);
@@ -620,13 +623,21 @@ $('#btn-copy-sql')?.addEventListener('click', () => {
 // ---------- Старт ----------
 (async function init() {
   let jobInfo = null;
-  try {
-    const r = await fetch('/api/job');
-    const ct = r.headers.get('content-type') || '';
-    if (!r.ok || !ct.includes('application/json')) throw new Error('no backend');
-    jobInfo = await r.json();
-  } catch {
+  if (document.documentElement.classList.contains('cloud-only')) {
     CLOUD_ONLY = true;
+    try {
+      const cached = JSON.parse(localStorage.getItem('lh-cloud-cache') || 'null');
+      if (Array.isArray(cached) && cached.length) { setLeads(cached); render(); }
+    } catch {}
+  } else {
+    try {
+      const r = await fetch('/api/job');
+      const ct = r.headers.get('content-type') || '';
+      if (!r.ok || !ct.includes('application/json')) throw new Error('no backend');
+      jobInfo = await r.json();
+    } catch {
+      CLOUD_ONLY = true;
+    }
   }
 
   const [leads, settings] = await Promise.all([api('/api/leads'), api('/api/settings')]);
@@ -635,7 +646,7 @@ $('#btn-copy-sql')?.addEventListener('click', () => {
     renderJob(jobInfo.job);
     (jobInfo.logs || []).forEach(addLog);
   }
-  $("#grid").classList.add("intro"); render(); setTimeout(() => $("#grid").classList.remove("intro"), 1200);
+  render();
   const v = location.hash.slice(1);
   if (v && $('#view-' + v) && !(CLOUD_ONLY && v === 'parser')) go(v); else if (!leads.length && !CLOUD_ONLY) go('parser');
 
