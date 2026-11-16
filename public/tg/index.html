@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <title>LeadHunter</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="style.css?v=1" />
+</head>
+<body>
+  <div class="aurora"><i></i><i></i><i></i></div>
+
+  <header class="top">
+    <div class="logo"><span></span></div>
+    <div class="top-t"><b>LeadHunter</b><span id="sub">загрузка…</span></div>
+    <span class="live" id="live" title="Связь с ПК"></span>
+  </header>
+
+  <main>
+    <!-- ПАРСЕР -->
+    <section class="view" id="v-parser">
+      <div class="card job" id="jobCard">
+        <div class="job-head">
+          <div class="ring" id="ring"><span id="ringTxt">—</span></div>
+          <div class="grow">
+            <b id="jobTitle">Парсер свободен</b>
+            <div class="muted small" id="jobCurrent">Запусти поиск ниже</div>
+          </div>
+        </div>
+        <div class="kpis">
+          <div><b id="kFound">0</b><span>найдено</span></div>
+          <div><b id="kNew">0</b><span>новых</span></div>
+          <div><b id="kChecked">0</b><span>сайтов проверено</span></div>
+        </div>
+        <div class="log" id="log"></div>
+        <button class="btn danger hidden" id="stopBtn">Остановить</button>
+      </div>
+
+      <div class="card">
+        <label>Ниши</label>
+        <textarea id="niches" rows="2" placeholder="автосервис, барбершоп"></textarea>
+        <div class="chips wrap" id="nicheChips"></div>
+
+        <label>Города</label>
+        <input id="cities" placeholder="Казань, Уфа — можно пусто" />
+        <div class="chips wrap" id="cityChips"></div>
+
+        <label>Источники</label>
+        <div class="seg" id="sources">
+          <button data-v="2gis">2ГИС</button><button data-v="yandex">Яндекс</button><button data-v="google">Google</button>
+        </div>
+
+        <label>Фирм на каждое задание</label>
+        <div class="seg" id="limit">
+          <button data-v="20">20</button><button data-v="50">50</button><button data-v="100">100</button><button data-v="200">200</button><button data-v="500">500</button>
+        </div>
+
+        <label class="switch"><input type="checkbox" id="headless" /><i></i><span>Фоновый режим<small>без окна браузера на ПК</small></span></label>
+        <div class="hint">Если 2ГИС или Яндекс покажут капчу «я не робот», её нужно пройти в окне браузера на ПК — поэтому на первых запусках фоновый режим лучше не включать.</div>
+        <div class="muted small" id="plan"></div>
+        <button class="btn primary" id="startBtn">Запустить парсинг</button>
+      </div>
+    </section>
+
+    <!-- БАЗА -->
+    <section class="view hidden" id="v-leads">
+      <div class="search"><input id="q" type="search" placeholder="Название, телефон, адрес" /></div>
+      <div class="chips scroll" id="siteFilter"></div>
+      <div class="chips scroll" id="cityFilter"></div>
+      <div class="row between">
+        <label class="switch mini"><input type="checkbox" id="hideTaken" checked /><i></i><span>Скрыть взятых</span></label>
+        <span class="muted small" id="count"></span>
+      </div>
+      <div id="list"></div>
+      <button class="btn ghost hidden" id="more">Показать ещё</button>
+      <div class="row gap">
+        <button class="btn ghost" id="exportList">CSV в чат</button>
+        <button class="btn ghost" id="recheckList">Перепроверить сайты</button>
+      </div>
+    </section>
+
+    <!-- ВОРОНКА -->
+    <section class="view hidden" id="v-funnel">
+      <div class="seg funnel" id="funnelTabs"></div>
+      <div id="funnelList"></div>
+    </section>
+
+    <!-- СТАТИСТИКА -->
+    <section class="view hidden" id="v-stats">
+      <div class="tiles" id="tiles"></div>
+      <div class="card" id="bars"></div>
+      <div class="card">
+        <h3>Настройки</h3>
+        <label>Текст первого касания <small class="muted">{name} — название, {problem} — проблема с сайтом</small></label>
+        <textarea id="tpl" rows="6"></textarea>
+        <label>Пауза между действиями, мс <small class="muted">больше — реже капча</small></label>
+        <input id="delay" type="number" min="300" step="100" />
+        <button class="btn primary" id="saveSettings">Сохранить</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabs">
+    <button data-view="parser" class="on"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z"/></svg><span>Парсер</span></button>
+    <button data-view="leads"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg><span>База</span><em id="hotBadge"></em></button>
+    <button data-view="funnel"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M8 15h3"/></svg><span>Клиенты</span></button>
+    <button data-view="stats"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Статистика</span></button>
+  </nav>
+
+  <div class="sheet hidden" id="sheet">
+    <div class="sheet-bg" data-close></div>
+    <div class="sheet-card"><div class="grab" data-close></div><div id="sheetBody"></div></div>
+  </div>
+
+  <div class="denied hidden" id="denied">
+    <div class="logo big"><span></span></div>
+    <h2>Нет доступа</h2>
+    <p class="muted" id="deniedText">Открой приложение из Telegram-бота. Сначала напиши боту /start.</p>
+  </div>
+
+  <div id="toast"></div>
+  <script src="/maplinks.js?v=1"></script>
+  <script src="app.js?v=2"></script>
+</body>
+</html>

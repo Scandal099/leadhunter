@@ -1,0 +1,30 @@
+{
+  "name": "leadhunter",
+  "version": "1.0.0",
+  "description": "Парсер 2ГИС / Яндекс Карт / Google Maps: поиск компаний без сайта",
+  "main": "server.js",
+  "bin": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "pkg . --output dist/LeadHunter.exe"
+  },
+  "pkg": {
+    "targets": [
+      "node22-win-x64"
+    ],
+    "assets": [
+      "public/**/*",
+      "node_modules/playwright-core/**/*"
+    ]
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright-core": "^1.65.0"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.25.0"
+  }
+}

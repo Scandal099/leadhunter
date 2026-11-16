@@ -1,0 +1,513 @@
+// ---------- Состояние ----------
+const S = {
+  leads: [],
+  byId: new Map(),
+  filter: 'hot',
+  selected: new Set(),
+  shown: 120,
+  settings: {},
+  job: null,
+  openId: null,
+};
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const api = async (url, opts = {}) => {
+  const r = await fetch(url, { headers: { 'content-type': 'application/json' }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+};
+function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2200); }
+
+const SITE = {
+  none: { t: 'Без сайта', short: 'Без сайта' },
+  social: { t: 'Только соцсети', short: 'Соцсети' },
+  constructor: { t: 'Конструктор', short: 'Конструктор' },
+  dead: { t: 'Сайт не работает', short: 'Не работает' },
+  weak: { t: 'Слабый сайт', short: 'Слабый' },
+  ok: { t: 'Нормальный сайт', short: 'Есть сайт' },
+  unknown: { t: 'Не удалось проверить', short: 'Не проверен' },
+};
+const STATUS = { new: 'Новый', base: 'В базе', work: 'В работе', client: 'Клиент', reject: 'Отказ' };
+const SRC = { '2gis': ['2Г', 's-2gis', '2ГИС'], yandex: ['Я', 's-yandex', 'Яндекс'], google: ['G', 's-google', 'Google'] };
+const HOT = new Set(['none', 'social', 'constructor', 'dead', 'weak']);
+const NICHES = ['автосервис', 'шиномонтаж', 'барбершоп', 'салон красоты', 'стоматология', 'клининг', 'ремонт квартир', 'натяжные потолки', 'фитнес', 'юрист', 'бухгалтерские услуги', 'груминг', 'автомойка', 'кафе', 'пекарня', 'цветы', 'ветклиника', 'массаж', 'тату-салон', 'изготовление мебели'];
+
+const I = {
+  phone: '<svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>',
+  wa: '<svg viewBox="0 0 24 24"><path d="M3 21l1.7-5A8.5 8.5 0 1 1 8 19.3z"/><path d="M9 9.5c0 3 2.5 5.5 5.5 5.5l1-1.5-2-1-1 .8a4 4 0 0 1-2-2l.8-1-1-2z"/></svg>',
+  tg: '<svg viewBox="0 0 24 24"><path d="M21 4L3 11l6 2 2 6 3-4 5 4z"/><path d="M9 13l8-6"/></svg>',
+  globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>',
+  map: '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
+  pin: '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
+  star: '<svg viewBox="0 0 24 24"><path d="M12 2l3 7 7 .6-5.3 4.7 1.6 7.2L12 17.8 5.7 21.5l1.6-7.2L2 9.6 9 9z"/></svg>',
+  vk: '<svg viewBox="0 0 24 24"><path d="M3 7h3.5c.5 4 2.5 6 4 6.5V7H14v3.5c1.5-.2 3-2 3.5-3.5H21c-.5 2.5-2.5 4.5-4 5.3 1.5.7 3.5 2.6 4 4.7h-3.7c-.6-1.6-2-3-3.3-3.2V17h-1C7 17 3.5 13 3 7z"/></svg>',
+  copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg>',
+};
+
+// ---------- Навигация ----------
+window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if ($('#view-' + v)) go(v); });
+function go(view) {
+  closeDrawer();
+  $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + view));
+  if (view === 'clients') renderKanban();
+  if (view === 'stats') renderStats();
+  if (view === 'settings') fillSettings();
+  history.replaceState(null, '', '#' + view);
+}
+window.go = go;
+$$('.nav-btn').forEach((b) => b.addEventListener('click', () => go(b.dataset.view)));
+
+// ---------- Данные ----------
+function setLeads(list) {
+  S.leads = list;
+  S.byId = new Map(list.map((l) => [l.id, l]));
+}
+function upsertLocal(l) {
+  const isNew = !S.byId.has(l.id);
+  if (isNew) S.leads.push(l); else Object.assign(S.byId.get(l.id), l);
+  S.byId.set(l.id, isNew ? l : S.byId.get(l.id));
+  return isNew;
+}
+const siteStatus = (l) => l.site?.status || (l.website ? 'pending' : (l.socials?.length ? 'social' : 'none'));
+const score = (l) => l.site?.score ?? (l.website ? 50 : 100);
+
+function problemText(l) {
+  const s = siteStatus(l);
+  if (s === 'none') return 'Заметил, что у вас нет сайта — клиенты из поиска уходят к конкурентам.';
+  if (s === 'social') return 'Вижу, что вместо сайта у вас только соцсети — из поиска Яндекса и Google вас почти не найти.';
+  if (s === 'constructor') return `Ваш сайт собран на конструкторе${l.site?.builder ? ' (' + l.site.builder + ')' : ''} — такие сайты плохо продвигаются и выглядят шаблонно.`;
+  if (s === 'dead') return 'Ваш сайт сейчас не открывается — клиенты видят ошибку.';
+  if (s === 'weak') return 'Ваш сайт выглядит устаревшим и плохо открывается с телефона.';
+  return 'Посмотрел ваш сайт — есть что улучшить по заявкам и скорости.';
+}
+
+// ---------- Фильтры ----------
+function applyFilters() {
+  const q = $('#q').value.trim().toLowerCase();
+  const city = $('#f-city').value, niche = $('#f-niche').value, src = $('#f-src').value;
+  const hideTaken = $('#f-hide-taken').checked;
+  let list = S.leads.filter((l) => {
+    const s = siteStatus(l);
+    if (S.filter === 'hot' && !(HOT.has(s) || s === 'pending')) return false;
+    if (!['hot', 'all'].includes(S.filter) && s !== S.filter) return false;
+    if (city && l.city !== city) return false;
+    if (niche && l.niche !== niche) return false;
+    if (src && !l.sources.some((x) => x.src === src)) return false;
+    if (hideTaken && l.status !== 'new') return false;
+    if (q && !(l.name + ' ' + l.address + ' ' + l.category + ' ' + l.phones.join(' ') + ' ' + l.website + ' ' + l.note).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const sort = $('#f-sort').value;
+  const cmp = {
+    score: (a, b) => score(b) - score(a) || (b.reviews || 0) - (a.reviews || 0),
+    new: (a, b) => b.createdAt - a.createdAt,
+    rating: (a, b) => (b.rating || 0) - (a.rating || 0),
+    reviews: (a, b) => (b.reviews || 0) - (a.reviews || 0),
+    name: (a, b) => a.name.localeCompare(b.name, 'ru'),
+  }[sort];
+  return list.sort(cmp);
+}
+
+function counts() {
+  const c = { all: S.leads.length, hot: 0, none: 0, social: 0, constructor: 0, dead: 0, weak: 0, ok: 0, clients: 0 };
+  for (const l of S.leads) {
+    const s = siteStatus(l);
+    if (c[s] !== undefined) c[s]++;
+    if (HOT.has(s) || s === 'pending') c.hot++;
+    if (l.status === 'client') c.clients++;
+  }
+  return c;
+}
+
+function fillSelect(sel, values, label) {
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">${label}</option>` + values.map((v) => `<option ${v === cur ? 'selected' : ''}>${esc(v)}</option>`).join('');
+}
+
+// ---------- Карточки ----------
+function cardHtml(l, flash) {
+  const s = siteStatus(l);
+  const chip = s === 'pending' ? '<span class="chip pending"><i></i>Проверяю…</span>' : `<span class="chip ${s}"><i></i>${SITE[s].short}</span>`;
+  const phone = l.phones[0];
+  const digits = phone ? phone.replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1') : '';
+  const tg = l.socials.find((x) => /t\.me|telegram/.test(x));
+  const reason = l.site?.reasons?.[0] || (s === 'pending' ? 'Проверяем сайт ' + l.website : '');
+  const mainMap = mainMapLink(l, S.settings);
+  const taken = l.status !== 'new';
+  return `<div class="card ${HOT.has(s) ? 'hot' : ''} ${S.selected.has(l.id) ? 'selected' : ''} ${l.status === 'reject' ? 'taken' : ''} ${flash ? 'flash' : ''}" data-id="${l.id}">
+    <div class="c-top">
+      <span class="cb" data-act="sel"></span>${chip}
+      ${l.status !== 'new' ? `<span class="chip st">${STATUS[l.status]}</span>` : ''}
+      ${l.sources.map((x) => `<a class="src" href="${esc(x.url || mapLinks(l, S.settings).find((m) => m.src === x.src).url)}" target="_blank" title="Открыть в ${SRC[x.src]?.[2]}"><b class="src-dot ${SRC[x.src]?.[1]}" style="margin:0;width:7px;height:7px"></b></a>`).join('')}
+      ${l.rating ? `<span class="rating">${I.star}${Number(l.rating).toFixed(1)}${l.reviews ? `<small>(${l.reviews})</small>` : ''}</span>` : ''}
+    </div>
+    <h3 class="c-name">${esc(l.name)}</h3>
+    <div class="c-meta">${I.pin}<span>${esc([l.city, l.category].filter(Boolean).join(' · ') || '—')}</span></div>
+    <div class="c-meta" style="margin-top:3px"><span>${esc(l.address || '')}</span></div>
+    ${phone ? `<div class="c-meta c-phone" style="margin-top:3px">${I.phone}<span>${esc(phone)}${l.phones.length > 1 ? ` <small>+${l.phones.length - 1}</small>` : ''}</span></div>` : ''}
+    ${reason ? `<div class="c-reason" title="${esc((l.site?.reasons || []).join('\n'))}">${esc(reason)}</div>` : ''}
+    <div class="c-bottom">
+      <a class="ib ${phone ? '' : 'off'}" href="tel:+${digits}" title="${esc(phone || 'Нет телефона')}" data-act="copyphone">${I.phone}</a>
+      <a class="ib ${digits ? '' : 'off'}" href="https://wa.me/${digits}" target="_blank" title="WhatsApp">${I.wa}</a>
+      <a class="ib ${tg ? '' : 'off'}" href="${esc(tg || '#')}" target="_blank" title="Telegram">${I.tg}</a>
+      <a class="ib ${l.website ? '' : 'off'}" href="${esc(l.website || '#')}" target="_blank" title="${esc(l.website || 'Нет сайта')}">${I.globe}</a>
+      <a class="ib" href="${esc(mainMap.url)}" target="_blank" title="${mainMap.direct ? 'Открыть страницу в ' + mainMap.name : 'Найти в ' + mainMap.name}">${I.map}</a>
+      <button class="take ${taken ? 'done' : ''}" data-act="take">${taken ? '✓ ' + STATUS[l.status] : '+ В базу'}</button>
+    </div>
+  </div>`;
+}
+
+let renderQueued = false;
+function scheduleRender() { if (!renderQueued) { renderQueued = true; requestAnimationFrame(() => { renderQueued = false; render(); }); } }
+const flashIds = new Set();
+
+function render() {
+  const c = counts();
+  for (const k of ['hot', 'all', 'none', 'social', 'constructor', 'dead', 'weak']) $('#c-' + k).textContent = c[k];
+  fillSelect($('#f-city'), [...new Set(S.leads.map((l) => l.city).filter(Boolean))].sort(), 'Все города');
+  fillSelect($('#f-niche'), [...new Set(S.leads.map((l) => l.niche).filter(Boolean))].sort(), 'Все ниши');
+  const list = applyFilters();
+  $('#st-shown').textContent = `Показано ${Math.min(list.length, S.shown)} из ${list.length} (в базе ${c.all})`;
+  $('#st-none').textContent = `${c.none} без сайта`;
+  $('#st-constructor').textContent = `${c.constructor} на конструкторе`;
+  $('#st-social').textContent = `${c.social} только соцсети`;
+  $('#st-clients').textContent = `${c.clients} клиентов`;
+  $('#grid').innerHTML = list.slice(0, S.shown).map((l) => cardHtml(l, flashIds.has(l.id))).join('');
+  flashIds.clear();
+  $('#btn-more').classList.toggle('hidden', list.length <= S.shown);
+  $('#empty').classList.toggle('hidden', S.leads.length > 0);
+  $('#bulkbar').classList.toggle('hidden', S.selected.size === 0);
+  $('#bulk-count').textContent = `${S.selected.size} выбрано`;
+  if (S.openId) renderDrawer();
+  if ($('#view-clients').classList.contains('active')) renderKanban();
+}
+
+$('#grid').addEventListener('click', async (e) => {
+  const card = e.target.closest('.card'); if (!card) return;
+  const id = card.dataset.id; const l = S.byId.get(id);
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act === 'sel') { S.selected.has(id) ? S.selected.delete(id) : S.selected.add(id); return render(); }
+  if (act === 'take') { e.stopPropagation(); await patch(id, { status: l.status === 'new' ? 'base' : 'new' }); return; }
+  if (act === 'copyphone') { navigator.clipboard?.writeText(l.phones.join(', ')); toast('Телефон скопирован'); }
+  if (e.target.closest('a')) return;
+  openDrawer(id);
+});
+
+async function patch(id, body) {
+  const l = await api('/api/leads/' + id, { method: 'PATCH', body });
+  upsertLocal(l); scheduleRender();
+  return l;
+}
+
+// ---------- Drawer ----------
+function openDrawer(id) { S.openId = id; renderDrawer(); $('#drawer').classList.add('open'); }
+function closeDrawer() { S.openId = null; $('#drawer').classList.remove('open'); }
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+
+function renderDrawer() {
+  const l = S.byId.get(S.openId); if (!l) return closeDrawer();
+  const s = siteStatus(l);
+  const body = $('#drawer-body');
+  if (body.contains(document.activeElement) && /TEXTAREA|INPUT/.test(document.activeElement.tagName)) return; // не мешаем вводу
+  const msg = (S.settings.messageTemplate || '').replace('{name}', l.name).replace('{problem}', problemText(l));
+  const digits = (l.phones[0] || '').replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
+  const qName = encodeURIComponent(`${l.name} ${l.city}`);
+  body.innerHTML = `
+    <div class="d-head"><h2>${esc(l.name)}</h2><button class="x" onclick="closeDrawer()">✕</button></div>
+    <div class="c-meta" style="margin-top:8px">${I.pin}<span>${esc([l.city, l.category].filter(Boolean).join(' · '))}</span></div>
+    <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(l.address)}</div>
+    <div class="chips" style="margin-top:12px">
+      ${s === 'pending' ? '<span class="chip pending"><i></i>Проверяю…</span>' : `<span class="chip ${s}"><i></i>${SITE[s].t}</span>`}
+      ${l.rating ? `<span class="chip">★ ${Number(l.rating).toFixed(1)} · ${l.reviews || 0} отзывов</span>` : ''}
+      ${l.site?.score != null ? `<span class="chip">Потребность в сайте: ${l.site.score}%</span>` : ''}
+    </div>
+
+    <div class="d-sec"><h4>Страница на картах</h4><div class="maps">
+      ${mapLinks(l, S.settings).map((m) => `<a class="map-btn ${m.direct ? 'direct' : ''}" href="${esc(m.url)}" target="_blank">
+        <b class="src-dot ${SRC[m.src][1]}"></b><span><strong>${m.name}</strong><small>${m.direct ? 'Открыть страницу' : 'Найти на карте'}</small></span>${I.map}</a>`).join('')}
+    </div></div>
+
+    <div class="d-sec"><h4>Статус</h4><div class="chips">
+      ${Object.entries(STATUS).map(([k, v]) => `<button class="st-btn ${l.status === k ? 'on' : ''}" data-status="${k}">${v}</button>`).join('')}
+    </div></div>
+
+    <div class="d-sec"><h4>Сайт</h4>
+      ${l.website ? `<div class="kv">${I.globe}<a href="${esc(l.website)}" target="_blank">${esc(l.website)}</a></div>` : '<div class="muted">Сайт на картах не указан</div>'}
+      ${l.site?.title ? `<div class="muted" style="font-size:12.5px">Заголовок: ${esc(l.site.title)}</div>` : ''}
+      ${l.site?.reasons?.length ? `<ul style="margin-top:8px">${l.site.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+      <button class="pill" style="margin-top:10px" data-d="recheck">Перепроверить сайт</button>
+    </div>
+
+    <div class="d-sec"><h4>Контакты</h4>
+      ${l.phones.map((p) => `<div class="kv">${I.phone}<a href="tel:${esc(p)}">${esc(p)}</a><button class="pill copy" data-copy="${esc(p)}">Копировать</button></div>`).join('') || '<div class="muted">Телефонов нет</div>'}
+      ${(l.emails || []).map((m) => `<div class="kv">✉<a href="mailto:${esc(m)}">${esc(m)}</a></div>`).join('')}
+      ${l.socials.map((x) => `<div class="kv">${I.globe}<a href="${esc(x)}" target="_blank">${esc(x)}</a></div>`).join('')}
+    </div>
+
+    <div class="d-sec"><h4>Где искать ЛПР (владельца)</h4><div class="chips">
+      <a class="pill" target="_blank" href="https://www.google.com/search?q=${qName}+владелец+OR+директор">Поиск в Google</a>
+      <a class="pill" target="_blank" href="https://yandex.ru/search/?text=${qName}+директор">Поиск в Яндексе</a>
+      <a class="pill" target="_blank" href="https://www.rusprofile.ru/search?query=${encodeURIComponent(l.name)}">Rusprofile</a>
+      <a class="pill" target="_blank" href="https://vk.com/search?c%5Bq%5D=${encodeURIComponent(l.name)}&c%5Bsection%5D=communities">VK</a>    </div>
+    <label class="field"><span>Контактное лицо</span><input data-f="contactPerson" value="${esc(l.contactPerson)}" placeholder="Имя, должность, личный контакт"/></label>
+    <label class="field"><span>Заметка</span><textarea data-f="note" rows="3" placeholder="Позвонил, перезвонить в пятницу…">${esc(l.note)}</textarea></label>
+    </div>
+
+    <div class="d-sec"><h4>Сообщение для первого касания</h4>
+      <div class="msg" id="d-msg">${esc(msg)}</div>
+      <div class="chips" style="margin-top:10px">
+        <button class="pill glow" data-copy-msg>Скопировать текст</button>
+        ${digits ? `<a class="pill" target="_blank" href="https://wa.me/${digits}?text=${encodeURIComponent(msg)}">Открыть в WhatsApp</a>` : ''}
+      </div>
+    </div>`;
+}
+$('#drawer-body').addEventListener('click', async (e) => {
+  const l = S.byId.get(S.openId); if (!l) return;
+  const st = e.target.closest('[data-status]');
+  if (st) { await patch(l.id, { status: st.dataset.status }); toast('Статус: ' + STATUS[st.dataset.status]); return renderDrawer(); }
+  const cp = e.target.closest('[data-copy]');
+  if (cp) { navigator.clipboard?.writeText(cp.dataset.copy); return toast('Скопировано'); }
+  if (e.target.closest('[data-copy-msg]')) { navigator.clipboard?.writeText($('#d-msg').textContent); return toast('Сообщение скопировано'); }
+  if (e.target.closest('[data-d=recheck]')) { await api('/api/recheck', { method: 'POST', body: { ids: [l.id] } }); toast('Сайт отправлен на проверку'); }
+});
+$('#drawer-body').addEventListener('change', (e) => {
+  const f = e.target.dataset.f; if (f) patch(S.openId, { [f]: e.target.value }).then(() => toast('Сохранено'));
+});
+
+// ---------- Панель фильтров ----------
+$$('#site-tabs .tab').forEach((t) => t.addEventListener('click', () => {
+  $$('#site-tabs .tab').forEach((x) => x.classList.toggle('active', x === t));
+  S.filter = t.dataset.f; S.shown = 120; render();
+}));
+['#q', '#f-city', '#f-niche', '#f-src', '#f-sort', '#f-hide-taken'].forEach((s) => $(s).addEventListener(s === '#q' ? 'input' : 'change', () => { S.shown = 120; render(); }));
+$('#btn-more').addEventListener('click', () => { S.shown += 120; render(); });
+$('#btn-select-all').addEventListener('click', () => {
+  const list = applyFilters();
+  const all = list.every((l) => S.selected.has(l.id));
+  list.forEach((l) => (all ? S.selected.delete(l.id) : S.selected.add(l.id)));
+  render();
+});
+$('#btn-export').addEventListener('click', () => { location.href = '/api/export.csv?ids=' + applyFilters().map((l) => l.id).join(','); });
+$('#btn-recheck').addEventListener('click', async () => {
+  const ids = applyFilters().map((l) => l.id);
+  const r = await api('/api/recheck', { method: 'POST', body: { ids } });
+  toast(`Проверяю ${r.queued} сайтов`);
+});
+$('#bulkbar').addEventListener('click', async (e) => {
+  const a = e.target.dataset.bulk; if (!a) return;
+  const ids = [...S.selected];
+  if (a === 'clear') S.selected.clear();
+  if (a === 'base' || a === 'reject') { for (const id of ids) await patch(id, { status: a }); toast('Готово'); S.selected.clear(); }
+  if (a === 'recheck') { await api('/api/recheck', { method: 'POST', body: { ids } }); toast('Проверяю сайты'); }
+  if (a === 'export') location.href = '/api/export.csv?ids=' + ids.join(',');
+  if (a === 'delete') {
+    if (!confirm(`Удалить ${ids.length} записей из базы?`)) return;
+    await api('/api/leads/delete', { method: 'POST', body: { ids } });
+    setLeads(S.leads.filter((l) => !S.selected.has(l.id))); S.selected.clear();
+  }
+  render();
+});
+
+// ---------- Парсер ----------
+$('#quick-niches').innerHTML = NICHES.map((n) => `<button>${n}</button>`).join('');
+$('#quick-niches').addEventListener('click', (e) => {
+  if (e.target.tagName !== 'BUTTON') return;
+  const ta = $('#f-niches'); const cur = ta.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  if (!cur.includes(e.target.textContent)) cur.push(e.target.textContent);
+  ta.value = cur.join(', ');
+});
+$$('#f-sources .tgl').forEach((b) => b.addEventListener('click', () => b.classList.toggle('on')));
+$$('#f-limit button').forEach((b) => b.addEventListener('click', () => { $('#f-limit input').value = b.dataset.v; }));
+const PREF_KEY = 'lh-form';
+function saveForm() {
+  localStorage.setItem(PREF_KEY, JSON.stringify({ niches: $('#f-niches').value, cities: $('#f-cities').value, limit: $('#f-limit input').value, headless: $('#f-headless').checked, check: $('#f-check').checked, sources: $$('#f-sources .tgl.on').map((b) => b.dataset.src) }));
+}
+(function loadForm() {
+  try {
+    const f = JSON.parse(localStorage.getItem(PREF_KEY)); if (!f) return;
+    $('#f-niches').value = f.niches || ''; $('#f-cities').value = f.cities || ''; $('#f-limit input').value = f.limit || 50;
+    $('#f-headless').checked = !!f.headless; $('#f-check').checked = f.check !== false;
+    $$('#f-sources .tgl').forEach((b) => b.classList.toggle('on', (f.sources || []).includes(b.dataset.src)));
+  } catch {}
+})();
+
+$('#btn-start').addEventListener('click', async () => {
+  saveForm();
+  try {
+    await api('/api/parse', { method: 'POST', body: {
+      niches: $('#f-niches').value, cities: $('#f-cities').value,
+      sources: $$('#f-sources .tgl.on').map((b) => b.dataset.src),
+      limit: +$('#f-limit input').value, headless: $('#f-headless').checked, checkSites: $('#f-check').checked,
+    } });
+    $('#log').innerHTML = '';
+  } catch (e) { toast(e.message); }
+});
+$('#btn-stop').addEventListener('click', () => api('/api/stop', { method: 'POST' }));
+
+function renderJob(j) {
+  S.job = j;
+  const running = !!j?.running;
+  $('.progress-panel').classList.toggle('running', running);
+  $('#btn-start').disabled = running;
+  $('#btn-start span').textContent = running ? 'Идёт парсинг…' : 'Запустить парсинг';
+  $('#btn-stop').classList.toggle('hidden', !running);
+  $('.nav-btn[data-view=parser]').classList.toggle('busy', running);
+  if (!j) return;
+  $('#p-found').textContent = j.found;
+  $('#p-new').textContent = j.newLeads;
+  $('#p-tasks').textContent = `${j.done}/${j.total}`;
+  $('#p-checked').textContent = j.checked || 0;
+  $('#p-current').textContent = running ? j.current || 'Запуск браузера…' : (j.finishedAt ? 'Готово ✓' : '');
+  const pct = j.total ? j.done / j.total : 0;
+  $('#ring-fg').style.strokeDashoffset = 327 - 327 * (running ? Math.max(pct, 0.08) : pct);
+}
+function addLog(e) {
+  const box = $('#log');
+  const d = document.createElement('div');
+  d.innerHTML = `<time>${new Date(e.t).toLocaleTimeString('ru')}</time>${esc(e.msg)}`;
+  box.appendChild(d);
+  while (box.children.length > 300) box.firstChild.remove();
+  box.scrollTop = box.scrollHeight;
+}
+
+// ---------- Воронка ----------
+function renderKanban() {
+  const cols = [['base', 'В базе'], ['work', 'В работе'], ['client', 'Клиенты'], ['reject', 'Отказ']];
+  $('#kanban').innerHTML = cols.map(([k, t]) => {
+    const items = S.leads.filter((l) => l.status === k).sort((a, b) => b.updatedAt - a.updatedAt);
+    return `<div class="col glass" data-col="${k}"><h3>${t}<b>${items.length}</b></h3>${items.map((l) => `
+      <div class="card" draggable="true" data-id="${l.id}">
+        <div class="c-top"><span class="chip ${siteStatus(l) === 'pending' ? 'pending' : siteStatus(l)}"><i></i>${SITE[siteStatus(l)]?.short || '…'}</span>${l.rating ? `<span class="rating">${I.star}${Number(l.rating).toFixed(1)}</span>` : ''}</div>
+        <h3 class="c-name">${esc(l.name)}</h3>
+        <div class="c-meta">${esc(l.phones[0] || '')}</div>
+        ${l.note ? `<div class="c-reason">${esc(l.note)}</div>` : ''}
+      </div>`).join('')}</div>`;
+  }).join('');
+}
+$('#kanban').addEventListener('click', (e) => { const c = e.target.closest('.card'); if (c) openDrawer(c.dataset.id); });
+$('#kanban').addEventListener('dragstart', (e) => { const c = e.target.closest('.card'); if (c) e.dataTransfer.setData('id', c.dataset.id); });
+$('#kanban').addEventListener('dragover', (e) => { const col = e.target.closest('.col'); if (col) { e.preventDefault(); col.classList.add('drop'); } });
+$('#kanban').addEventListener('dragleave', (e) => e.target.closest('.col')?.classList.remove('drop'));
+$('#kanban').addEventListener('drop', async (e) => {
+  const col = e.target.closest('.col'); if (!col) return;
+  e.preventDefault(); col.classList.remove('drop');
+  await patch(e.dataTransfer.getData('id'), { status: col.dataset.col }); renderKanban();
+});
+
+// ---------- Аналитика ----------
+function bars(title, entries) {
+  const max = Math.max(1, ...entries.map((e) => e[1]));
+  return `<div class="chart glass"><h3>${title}</h3>${entries.length ? entries.map(([k, v]) => `<div class="bar"><span title="${esc(k)}">${esc(k)}</span><div class="tr"><i style="width:${(v / max) * 100}%"></i></div><b>${v}</b></div>`).join('') : '<div class="muted">Нет данных</div>'}</div>`;
+}
+function groupCount(fn) {
+  const m = new Map();
+  for (const l of S.leads) for (const k of [].concat(fn(l)).filter(Boolean)) m.set(k, (m.get(k) || 0) + 1);
+  return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+}
+function renderStats() {
+  const c = counts();
+  const hotPct = c.all ? Math.round((c.hot / c.all) * 100) : 0;
+  $('#stats').innerHTML = `
+    <div class="tiles">
+      <div class="tile glass"><b class="shimmer-text">${c.all}</b><span>всего в базе</span></div>
+      <div class="tile glass"><b>${c.hot}</b><span>нужен сайт (${hotPct}%)</span></div>
+      <div class="tile glass"><b>${c.none}</b><span>без сайта</span></div>
+      <div class="tile glass"><b>${c.constructor}</b><span>на конструкторе</span></div>
+      <div class="tile glass"><b>${S.leads.filter((l) => l.status === 'work').length}</b><span>в работе</span></div>
+      <div class="tile glass"><b>${c.clients}</b><span>клиентов</span></div>
+    </div>
+    ${bars('Состояние сайтов', groupCount((l) => SITE[siteStatus(l)]?.t || 'Проверяется'))}
+    ${bars('Конструкторы', groupCount((l) => l.site?.builder))}
+    ${bars('Горячие лиды по нишам', groupCount((l) => (HOT.has(siteStatus(l)) ? l.niche : null)))}
+    ${bars('По городам', groupCount((l) => l.city))}
+    ${bars('По источникам', groupCount((l) => l.sources.map((s) => SRC[s.src]?.[2])))}
+    ${bars('Воронка', groupCount((l) => STATUS[l.status]))}`;
+}
+
+// ---------- Настройки ----------
+const SUPABASE_SQL = `create table if not exists leads (
+  id text primary key,
+  data jsonb not null,
+  updated_at bigint not null default 0,
+  deleted boolean not null default false
+);
+create index if not exists leads_updated_at_idx on leads (updated_at);
+alter table leads disable row level security;`;
+
+async function refreshCloudStatus() {
+  const box = $('#cloud-status');
+  if (!box) return;
+  try {
+    const st = await api('/api/cloud/status');
+    if (!st.enabled) {
+      box.innerHTML = '<span class="dot" style="background:var(--c-ok);color:var(--c-ok)"></span><span>Локальный режим (данные только на этом ПК)</span>';
+    } else if (st.connected) {
+      const t = st.lastSyncAt ? new Date(st.lastSyncAt).toLocaleTimeString() : '—';
+      box.innerHTML = `<span class="dot d-client"></span><span>Подключено к Supabase · Лидов: ${st.totalLeads} · Синхр: ${t}</span>`;
+    } else {
+      box.innerHTML = `<span class="dot d-none"></span><span>Ошибка подключения: ${esc(st.error || 'проверьте URL и ключ')}</span>`;
+    }
+  } catch {}
+}
+
+function fillSettings() {
+  const s = S.settings;
+  $('#s-2gis').value = s.twogisDomain || ''; $('#s-yandex').value = s.yandexDomain || '';
+  $('#s-delay').value = s.delayMs; $('#s-conc').value = s.siteCheckConcurrency; $('#s-template').value = s.messageTemplate || '';
+  $('#s-sb-url').value = s.supabaseUrl || ''; $('#s-sb-key').value = s.supabaseKey || '';
+  refreshCloudStatus();
+}
+$('#btn-save-settings').addEventListener('click', async () => {
+  S.settings = await api('/api/settings', { method: 'POST', body: {
+    twogisDomain: $('#s-2gis').value.trim() || '2gis.ru', yandexDomain: $('#s-yandex').value.trim() || 'yandex.ru',
+    delayMs: +$('#s-delay').value || 1200, siteCheckConcurrency: +$('#s-conc').value || 6, messageTemplate: $('#s-template').value,
+    supabaseUrl: $('#s-sb-url').value.trim(), supabaseKey: $('#s-sb-key').value.trim(),
+  } });
+  toast('Настройки сохранены');
+  setTimeout(async () => {
+    await refreshCloudStatus();
+    setLeads(await api('/api/leads'));
+    render();
+  }, 800);
+});
+$('#btn-cloud-sync')?.addEventListener('click', async () => {
+  toast('Синхронизация...');
+  await api('/api/cloud/sync', { method: 'POST' });
+  await refreshCloudStatus();
+  setLeads(await api('/api/leads'));
+  render();
+  toast('Синхронизировано');
+});
+$('#btn-copy-sql')?.addEventListener('click', () => {
+  navigator.clipboard.writeText(SUPABASE_SQL);
+  toast('SQL скопирован — вставь в SQL Editor в Supabase');
+});
+
+// ---------- Старт ----------
+(async function init() {
+  const [leads, settings, jobInfo] = await Promise.all([api('/api/leads'), api('/api/settings'), api('/api/job')]);
+  setLeads(leads); S.settings = settings;
+  renderJob(jobInfo.job); jobInfo.logs.forEach(addLog);
+  $("#grid").classList.add("intro"); render(); setTimeout(() => $("#grid").classList.remove("intro"), 1200);
+  const v = location.hash.slice(1);
+  if (v && $('#view-' + v)) go(v); else if (!leads.length) go('parser');
+
+  const es = new EventSource('/api/events');
+  es.addEventListener('job', (e) => renderJob(JSON.parse(e.data)));
+  es.addEventListener('log', (e) => addLog(JSON.parse(e.data)));
+  es.addEventListener('lead', (e) => { const l = JSON.parse(e.data); if (upsertLocal(l)) flashIds.add(l.id); scheduleRender(); });
+  es.addEventListener('deleted', (e) => {
+    const { ids } = JSON.parse(e.data);
+    const s = new Set(ids || []);
+    S.leads = S.leads.filter((l) => !s.has(l.id));
+    s.forEach((id) => S.selected.delete(id));
+    scheduleRender();
+  });
+  es.addEventListener('sync', async () => {
+    setLeads(await api('/api/leads'));
+    scheduleRender();
+  });
+})();

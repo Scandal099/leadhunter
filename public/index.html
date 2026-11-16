@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LeadHunter — поиск клиентов без сайта</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='12' fill='none' stroke='white' stroke-width='3'/><circle cx='16' cy='16' r='4' fill='white'/></svg>" />
+  <link rel="stylesheet" href="/style.css?v=5" />
+</head>
+<body>
+  <div class="aurora"><i></i><i></i><i></i></div>
+  <div class="noise"></div>
+
+  <div class="app">
+    <!-- Сайдбар -->
+    <nav class="sidebar">
+      <div class="logo" title="LeadHunter"><span class="logo-ring"></span></div>
+      <button class="nav-btn" data-view="parser"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z"/><path d="M19 15l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/></svg><span>Парсер</span></button>
+      <button class="nav-btn active" data-view="base"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg><span>База</span></button>
+      <button class="nav-btn" data-view="clients"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M8 15h3"/></svg><span>Клиенты</span></button>
+      <button class="nav-btn" data-view="stats"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M7 13l3-3 3 2 4-4M8 21h8M12 17v4"/></svg><span>Графики</span></button>
+      <div class="grow"></div>
+      <button class="nav-btn" data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span>Настройки</span></button>
+    </nav>
+
+    <!-- ПАРСЕР -->
+    <section class="view" id="view-parser">
+      <div class="parser-grid">
+        <div class="panel glass">
+          <h1 class="shimmer-text">Найти клиентов</h1>
+          <p class="muted">Ищем организации на картах, у которых нет сайта, только соцсети или сайт на конструкторе.</p>
+
+          <label class="field">
+            <span>Ниши <em>(через запятую или с новой строки)</em></span>
+            <textarea id="f-niches" rows="3" placeholder="автосервис, барбершоп, стоматология, клининг"></textarea>
+          </label>
+          <div class="quick" id="quick-niches"></div>
+
+          <label class="field">
+            <span>Города</span>
+            <input id="f-cities" placeholder="Казань, Самара" />
+          </label>
+
+          <div class="field">
+            <span>Источники</span>
+            <div class="toggles" id="f-sources">
+              <button class="tgl on" data-src="2gis"><b class="src-dot s-2gis"></b>2ГИС</button>
+              <button class="tgl on" data-src="yandex"><b class="src-dot s-yandex"></b>Яндекс Карты</button>
+              <button class="tgl on" data-src="google"><b class="src-dot s-google"></b>Google Maps</button>
+            </div>
+          </div>
+
+          <div class="row2">
+            <label class="field">
+              <span>Лимит на запрос</span>
+              <div class="seg" id="f-limit">
+                <input type="number" min="1" max="1000" value="50" />
+                <button data-v="30">30</button><button data-v="100">100</button><button data-v="300">300</button>
+              </div>
+            </label>
+          </div>
+
+          <div class="checks">
+            <label class="switch"><input type="checkbox" id="f-check" checked /><i></i>Сразу проверять сайты</label>
+            <label class="switch"><input type="checkbox" id="f-headless" /><i></i>Фоновый режим (без окна браузера)</label>
+          </div>
+
+          <div class="actions">
+            <button class="btn-primary" id="btn-start"><span>Запустить парсинг</span></button>
+            <button class="btn-ghost hidden" id="btn-stop">Остановить</button>
+          </div>
+          <p class="hint">Совет: при первом запуске оставь окно браузера видимым — если Яндекс или 2ГИС попросят пройти «я не робот», просто пройди проверку в окне, парсер продолжит сам.</p>
+        </div>
+
+        <div class="panel glass progress-panel">
+          <div class="ring-wrap">
+            <svg class="ring" viewBox="0 0 120 120"><defs><linearGradient id="rg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#9fb7ff"/><stop offset=".5" stop-color="#f3b7ff"/><stop offset="1" stop-color="#9ff3e4"/></linearGradient></defs><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fg" id="ring-fg"/></svg>
+            <div class="ring-center"><b id="p-found">0</b><span>найдено</span></div>
+          </div>
+          <div class="p-stats">
+            <div><b id="p-new">0</b><span>новых</span></div>
+            <div><b id="p-tasks">0/0</b><span>заданий</span></div>
+            <div><b id="p-checked">0</b><span>сайтов проверено</span></div>
+          </div>
+          <div class="p-current" id="p-current">Ожидание запуска</div>
+          <div class="log" id="log"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- БАЗА -->
+    <section class="view active" id="view-base">
+      <header class="topbar">
+        <div class="tabs" id="site-tabs">
+          <button class="tab active" data-f="hot">Горячие <b id="c-hot">0</b></button>
+          <button class="tab" data-f="all">Все <b id="c-all">0</b></button>
+          <button class="tab" data-f="none">Без сайта <b id="c-none">0</b></button>
+          <button class="tab" data-f="social">Соцсети <b id="c-social">0</b></button>
+          <button class="tab" data-f="constructor">Конструктор <b id="c-constructor">0</b></button>
+          <button class="tab" data-f="dead">Не работает <b id="c-dead">0</b></button>
+          <button class="tab" data-f="weak">Слабый <b id="c-weak">0</b></button>
+        </div>
+        <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="q" placeholder="Поиск по всей базе" /></div>
+        <select id="f-city"><option value="">Все города</option></select>
+        <select id="f-niche"><option value="">Все ниши</option></select>
+        <select id="f-src"><option value="">Все источники</option><option value="2gis">2ГИС</option><option value="yandex">Яндекс</option><option value="google">Google</option></select>
+        <select id="f-sort"><option value="score">Сначала горячие</option><option value="new">Сначала новые</option><option value="rating">По рейтингу</option><option value="reviews">По отзывам</option><option value="name">По названию</option></select>
+      </header>
+
+      <div class="statline">
+        <span id="st-shown">Показано 0</span>
+        <span class="dot d-none"></span><span id="st-none">0 без сайта</span>
+        <span class="dot d-constructor"></span><span id="st-constructor">0 на конструкторе</span>
+        <span class="dot d-social"></span><span id="st-social">0 только соцсети</span>
+        <span class="dot d-client"></span><span id="st-clients">0 клиентов</span>
+        <div class="grow"></div>
+        <label class="switch sm"><input type="checkbox" id="f-hide-taken" /><i></i>Скрыть взятые</label>
+        <button class="pill" id="btn-select-all">Выделить все</button>
+        <button class="pill" id="btn-export">Экспорт CSV</button>
+        <button class="pill glow" id="btn-recheck">Проверить сайты</button>
+      </div>
+
+      <div class="bulkbar hidden" id="bulkbar">
+        <span id="bulk-count">0 выбрано</span>
+        <button class="pill" data-bulk="base">+ В базу</button>
+        <button class="pill" data-bulk="reject">Отказ</button>
+        <button class="pill" data-bulk="recheck">Перепроверить</button>
+        <button class="pill" data-bulk="export">Экспорт</button>
+        <button class="pill danger" data-bulk="delete">Удалить</button>
+        <button class="pill" data-bulk="clear">✕</button>
+      </div>
+
+      <div class="grid" id="grid"></div>
+      <div class="empty hidden" id="empty">
+        <div class="empty-orb"></div>
+        <h2 class="shimmer-text">База пока пустая</h2>
+        <p class="muted">Открой «Парсер», выбери ниши и города — найденные конторы появятся здесь.</p>
+        <button class="btn-primary" onclick="go('parser')"><span>Перейти к парсеру</span></button>
+      </div>
+      <button class="pill more hidden" id="btn-more">Показать ещё</button>
+    </section>
+
+    <!-- КЛИЕНТЫ (воронка) -->
+    <section class="view" id="view-clients">
+      <header class="topbar"><h2 class="shimmer-text title">Воронка клиентов</h2></header>
+      <div class="kanban" id="kanban"></div>
+    </section>
+
+    <!-- ГРАФИКИ -->
+    <section class="view" id="view-stats">
+      <header class="topbar"><h2 class="shimmer-text title">Аналитика</h2></header>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <!-- НАСТРОЙКИ -->
+    <section class="view" id="view-settings">
+      <header class="topbar"><h2 class="shimmer-text title">Настройки</h2></header>
+      <div class="panel glass settings">
+        <label class="field"><span>Домен 2ГИС</span><input id="s-2gis" placeholder="2gis.ru" /></label>
+        <label class="field"><span>Домен Яндекс Карт</span><input id="s-yandex" placeholder="yandex.ru" /></label>
+        <label class="field"><span>Пауза между прокрутками, мс <em>(больше — меньше шанс капчи)</em></span><input id="s-delay" type="number" /></label>
+        <label class="field"><span>Параллельных проверок сайтов</span><input id="s-conc" type="number" /></label>
+        <label class="field"><span>Шаблон сообщения <em>{name} — название, {problem} — что не так с сайтом</em></span><textarea id="s-template" rows="5"></textarea></label>
+        <div class="d-sec">
+          <h4>Облачная база данных (Supabase) — общая база и воронка для всех</h4>
+          <div class="statline" id="cloud-status"><span class="dot"></span><span>Локальный режим (только этот ПК)</span></div>
+          <label class="field"><span>Supabase Project URL <em>(или SUPABASE_URL в .env)</em></span><input id="s-sb-url" placeholder="https://xxxxxx.supabase.co" /></label>
+          <label class="field"><span>Supabase API Key <em>(anon / service_role или SUPABASE_KEY в .env)</em></span><input id="s-sb-key" type="password" placeholder="eyJ..." /></label>
+          <div class="actions">
+            <button class="pill" type="button" id="btn-cloud-sync">Синхронизировать сейчас</button>
+            <button class="pill" type="button" id="btn-copy-sql">Скопировать SQL для Supabase</button>
+          </div>
+        </div>
+        <div class="actions"><button class="btn-primary" id="btn-save-settings"><span>Сохранить</span></button></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Карточка лида -->
+  <aside class="drawer" id="drawer"><div class="drawer-inner glass" id="drawer-body"></div></aside>
+  <div class="toast" id="toast"></div>
+
+  <script src="/maplinks.js?v=4"></script>
+  <script src="/app.js?v=5"></script>
+</body>
+</html>
