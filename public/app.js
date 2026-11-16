@@ -301,7 +301,7 @@ $('#grid').addEventListener('click', async (e) => {
   const card = e.target.closest('.card'); if (!card) return;
   const id = card.dataset.id; const l = S.byId.get(id);
   const act = e.target.closest('[data-act]')?.dataset.act;
-  if (act === 'sel') { S.selected.has(id) ? S.selected.delete(id) : S.selected.add(id); return render(); }
+  if (act === 'sel') { e.preventDefault(); e.stopPropagation(); S.selected.has(id) ? S.selected.delete(id) : S.selected.add(id); return render(); }
   if (act === 'take') { e.stopPropagation(); await patch(id, { status: l.status === 'new' ? 'base' : 'new' }); return; }
   if (act === 'copyphone') { navigator.clipboard?.writeText(l.phones.join(', ')); toast('Телефон скопирован'); }
   if (e.target.closest('a')) return;

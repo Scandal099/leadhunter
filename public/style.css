@@ -114,7 +114,7 @@ select option { background: #121216; }
 }
 @keyframes cardIn { from { opacity: 0; transform: translateY(10px) scale(.98); } }
 .card::before { /* переливающаяся рамка */
-  content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
+  content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
   background: var(--iri-conic); animation: spin 5s linear infinite;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
   opacity: 0; transition: opacity .3s;
@@ -135,7 +135,8 @@ select option { background: #121216; }
 @keyframes flash { 0% { box-shadow: 0 0 0 1px #fff, 0 0 40px #c8bfff; } 100% { box-shadow: none; } }
 
 .c-top { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
-.cb { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid var(--line-2); display: grid; place-items: center; flex: none; transition: .15s; }
+.cb { position: relative; z-index: 2; width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--line-2); display: grid; place-items: center; flex: none; transition: .15s; cursor: pointer; }
+.cb::before { content: ''; position: absolute; inset: -12px; }
 .cb:hover { border-color: #fff; }
 .card.selected .cb { background: #fff; border-color: #fff; }
 .card.selected .cb::after { content: ''; width: 9px; height: 5px; border: 2px solid #000; border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px); }
