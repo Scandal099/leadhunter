@@ -2,6 +2,7 @@
 const db = require('./db');
 const { getContext } = require('./browser');
 const { checkSite, networkOk } = require('./siteCheck');
+const { siteStatus } = require('./leadUtil');
 const SOURCES = {
   '2gis': require('./sources/twogis'),
   yandex: require('./sources/yandex'),
@@ -30,14 +31,43 @@ function progress(patch) { Object.assign(job, patch); emit('job', publicJob()); 
 
 const checkQueue = [];
 let checking = 0;
+const SITE_ONLY_STATUSES = ['constructor', 'dead', 'weak', 'ok'];
+function queueCheckItem(item, saveStatuses) {
+  checkQueue.push({ item, saveStatuses });
+  pumpChecks();
+}
 function queueCheck(lead) {
-  checkQueue.push(lead.id);
+  checkQueue.push({ id: lead.id });
   pumpChecks();
 }
 function pumpChecks() {
   const conc = db.getSettings().siteCheckConcurrency || 6;
   while (checking < conc && checkQueue.length) {
-    const id = checkQueue.shift();
+    const task = checkQueue.shift();
+    if (task.item) {
+      checking++;
+      const item = task.item;
+      checkSite(item.website, item.socials)
+        .then((site) => {
+          const st = site?.status || (item.website ? 'unknown' : (item.socials?.length ? 'social' : 'none'));
+          if (task.saveStatuses && !task.saveStatuses.has(st)) return;
+          const { lead, isNew } = db.upsertLead({ ...item, site });
+          if (job) {
+            if (isNew) job.newLeads++;
+            emit('job', publicJob());
+          }
+          emit('lead', lead);
+        })
+        .catch((e) => log('Ошибка проверки сайта ' + item.website + ': ' + e.message))
+        .finally(() => {
+          checking--;
+          if (job) progress({ checked: (job.checked || 0) + 1 });
+          pumpChecks();
+          if (!checking && !checkQueue.length) emit('checksDone', {});
+        });
+      continue;
+    }
+    const id = task.id;
     const lead = db.getLead(id);
     if (!lead) continue;
     checking++;
@@ -62,6 +92,8 @@ async function start(opts) {
   if (!niches.length) throw new Error('Укажи хотя бы одну нишу');
   if (!sources.length) throw new Error('Выбери хотя бы один источник');
   const limit = Math.max(1, Math.min(1000, +opts.limit || 50));
+  const saveStatuses = Array.isArray(opts.saveStatuses) && opts.saveStatuses.length ? new Set(opts.saveStatuses) : null;
+  const wantsAnyWebsiteStatus = !saveStatuses || SITE_ONLY_STATUSES.some((s) => saveStatuses.has(s));
   const settings = { ...db.getSettings(), headless: !!opts.headless };
 
   const tasks = [];
@@ -90,8 +122,21 @@ async function start(opts) {
             log, shouldStop: () => job.stopRequested,
             onItem: (item) => {
               if (!item.name) return;
-              const { lead, isNew } = db.upsertLead(item);
               job.found++;
+              if (saveStatuses) {
+                if (!item.website) {
+                  const st = item.socials?.length ? 'social' : 'none';
+                  if (!saveStatuses.has(st)) { emit('job', publicJob()); return; }
+                } else {
+                  if (!wantsAnyWebsiteStatus) { emit('job', publicJob()); return; }
+                  if (opts.checkSites !== false) {
+                    emit('job', publicJob());
+                    queueCheckItem(item, saveStatuses);
+                    return;
+                  }
+                }
+              }
+              const { lead, isNew } = db.upsertLead(item);
               if (isNew) job.newLeads++;
               emit('lead', lead);
               emit('job', publicJob());

@@ -141,7 +141,7 @@ const SITE = {
   ok: { t: 'Нормальный сайт', short: 'Есть сайт' },
   unknown: { t: 'Не удалось проверить', short: 'Не проверен' },
 };
-const STATUS = { new: 'Новый', base: 'В базе', work: 'В работе', client: 'Клиент', reject: 'Отказ' };
+const STATUS = { new: 'Новый', base: 'В базе', noanswer: 'Недозвон', work: 'В работе', client: 'Клиент', reject: 'Отказ' };
 const SRC = { '2gis': ['2Г', 's-2gis', '2ГИС'], yandex: ['Я', 's-yandex', 'Яндекс'], google: ['G', 's-google', 'Google'] };
 const HOT = new Set(['none', 'social', 'constructor', 'dead', 'weak']);
 const NICHES = ['автосервис', 'шиномонтаж', 'барбершоп', 'салон красоты', 'стоматология', 'клининг', 'ремонт квартир', 'натяжные потолки', 'фитнес', 'юрист', 'бухгалтерские услуги', 'груминг', 'автомойка', 'кафе', 'пекарня', 'цветы', 'ветклиника', 'массаж', 'тату-салон', 'изготовление мебели'];
@@ -328,6 +328,9 @@ function renderDrawer() {
   const body = $('#drawer-body');
   if (body.contains(document.activeElement) && /TEXTAREA|INPUT/.test(document.activeElement.tagName)) return; // не мешаем вводу
   const msg = (S.settings.messageTemplate || '').replace('{name}', l.name).replace('{problem}', problemText(l));
+  const ratingCompliment = l.rating ? `у вас высокий рейтинг ${Number(l.rating).toFixed(1)} и хорошие отзывы` : 'хорошие цены и услуги';
+  const mainPain = (l.enriched?.audit?.[0] || problemText(l)).replace(/\.$/, '').toLowerCase();
+  const callScript = `Здравствуйте! Я программист. Посмотрел вашу компанию «${l.name}» на картах — ${ratingCompliment}. Заметил, что ${mainPain}. Я уже собрал для вас бесплатную демо-версию сайта с вашими данными и фото. Давайте скину ссылку в мессенджер — посмотрите, если понравится, обсудим детали.`;
   const digits = (l.phones[0] || '').replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
   const qName = encodeURIComponent(`${l.name} ${l.city}`);
   body.innerHTML = `
@@ -368,7 +371,36 @@ function renderDrawer() {
       <a class="pill" target="_blank" href="https://www.rusprofile.ru/search?query=${encodeURIComponent(l.name)}">Rusprofile</a>
       <a class="pill" target="_blank" href="https://vk.com/search?c%5Bq%5D=${encodeURIComponent(l.name)}&c%5Bsection%5D=communities">VK</a>    </div>
     <label class="field"><span>Контактное лицо</span><input data-f="contactPerson" value="${esc(l.contactPerson)}" placeholder="Имя, должность, личный контакт"/></label>
+    <label class="field"><span>Ссылка на демо-сайт</span><div style="display:flex;gap:6px"><input data-f="demoUrl" value="${esc(l.demoUrl)}" placeholder="https://username.github.io/demo-..." style="flex:1"/>${l.demoUrl ? `<a class="pill" href="${esc(l.demoUrl)}" target="_blank">Открыть</a>` : ''}</div></label>
     <label class="field"><span>Заметка</span><textarea data-f="note" rows="3" placeholder="Позвонил, перезвонить в пятницу…">${esc(l.note)}</textarea></label>
+    </div>
+
+    <div class="d-sec"><h4>Данные для нейронки (Deep Enrich)</h4>
+      ${l.enriched ? `
+        <div class="chips">
+          <span class="chip">Фото: ${l.enriched.photos?.length || 0}</span>
+          <span class="chip">Услуг/цен: ${l.enriched.services?.length || 0}</span>
+          <span class="chip">Отзывов: ${l.enriched.reviews?.length || 0}</span>
+        </div>
+        ${l.enriched.hours ? `<div class="muted" style="font-size:12px;margin-top:6px">Часы: ${esc(l.enriched.hours)}</div>` : ''}
+        ${l.enriched.audit?.length ? `<ul style="margin-top:6px;font-size:12.5px">${l.enriched.audit.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>` : ''}
+        ${l.enriched.services?.length ? `<div class="muted" style="font-size:12px;margin-top:6px"><strong>Прайс:</strong> ${l.enriched.services.slice(0, 6).map((sv) => `${esc(sv.name)}${sv.price ? ' — ' + esc(sv.price) : ''}`).join(' · ')}</div>` : ''}
+      ` : '<div class="muted">Ещё не допарсено (нет фото и прайса из карточки)</div>'}
+      <div class="chips" style="margin-top:10px">
+        <button class="pill" data-d="enrich">Допарсить карточку</button>
+        <button class="pill glow" data-d="demo">Сделать демо</button>
+      </div>
+    </div>
+
+    <div class="d-sec"><h4>Режим прозвона (скрипт)</h4>
+      <div class="msg" id="d-call">${esc(callScript)}</div>
+      <div class="chips" style="margin-top:10px">
+        <button class="pill" data-copy-call>Копировать скрипт</button>
+        <button class="pill" data-call-res="noanswer">Недозвон</button>
+        <button class="pill glow" data-call-res="sent">Скинул демо</button>
+        <button class="pill" data-call-res="reject">Отказ</button>
+        <button class="pill glow" data-call-res="client">Клиент!</button>
+      </div>
     </div>
 
     <div class="d-sec"><h4>Сообщение для первого касания</h4>
@@ -386,7 +418,38 @@ $('#drawer-body').addEventListener('click', async (e) => {
   const cp = e.target.closest('[data-copy]');
   if (cp) { navigator.clipboard?.writeText(cp.dataset.copy); return toast('Скопировано'); }
   if (e.target.closest('[data-copy-msg]')) { navigator.clipboard?.writeText($('#d-msg').textContent); return toast('Сообщение скопировано'); }
+  if (e.target.closest('[data-copy-call]')) { navigator.clipboard?.writeText($('#d-call').textContent); return toast('Скрипт звонка скопирован'); }
+  const cr = e.target.closest('[data-call-res]');
+  if (cr) {
+    const type = cr.dataset.callRes;
+    const stamp = new Date().toLocaleDateString('ru-RU');
+    const prevNote = l.note ? l.note + '\n' : '';
+    if (type === 'noanswer') await patch(l.id, { status: 'noanswer', note: `${prevNote}[${stamp}] Недозвон` });
+    if (type === 'sent') await patch(l.id, { status: 'work', note: `${prevNote}[${stamp}] Созвон — скинул демо` });
+    if (type === 'reject') await patch(l.id, { status: 'reject', note: `${prevNote}[${stamp}] Отказ` });
+    if (type === 'client') await patch(l.id, { status: 'client', note: `${prevNote}[${stamp}] Договорились / Оплата` });
+    toast('Результат звонка сохранён');
+    return renderDrawer();
+  }
   if (e.target.closest('[data-d=recheck]')) { await api('/api/recheck', { method: 'POST', body: { ids: [l.id] } }); toast('Сайт отправлен на проверку'); }
+  if (e.target.closest('[data-d=enrich]')) {
+    try { await api('/api/enrich', { method: 'POST', body: { ids: [l.id] } }); toast('Допарсинг карточки запущен'); }
+    catch (err) { toast(err.message); }
+  }
+  if (e.target.closest('[data-d=demo]')) {
+    try {
+      const baseUrl = (localStorage.getItem('lh-demo-baseurl') || '').trim();
+      const r = await api('/api/demos/generate', { method: 'POST', body: { ids: [l.id], baseUrl } });
+      const item = r.results?.[0];
+      if (item) {
+        const updated = await api('/api/leads');
+        setLeads(updated);
+        renderDrawer();
+        toast('Демо готово ✓');
+        window.open(item.localUrl, '_blank');
+      }
+    } catch (err) { toast(err.message); }
+  }
 });
 $('#drawer-body').addEventListener('change', (e) => {
   const f = e.target.dataset.f; if (f) patch(S.openId, { [f]: e.target.value }).then(() => toast('Сохранено'));
@@ -399,6 +462,14 @@ $$('#site-tabs .tab').forEach((t) => t.addEventListener('click', () => {
 }));
 ['#q', '#f-city', '#f-niche', '#f-src', '#f-sort', '#f-hide-taken'].forEach((s) => $(s).addEventListener(s === '#q' ? 'input' : 'change', () => { S.shown = 120; render(); }));
 $('#btn-more').addEventListener('click', () => { S.shown += 120; render(); });
+$('#btn-pick-n')?.addEventListener('click', () => {
+  const n = Math.max(1, Math.min(500, +$('#pick-count')?.value || 20));
+  const list = applyFilters().slice(0, n);
+  S.selected.clear();
+  list.forEach((l) => S.selected.add(l.id));
+  render();
+  toast(`Выбрано ${list.length} лидов`);
+});
 $('#btn-select-all').addEventListener('click', () => {
   const list = applyFilters();
   const all = list.every((l) => S.selected.has(l.id));
@@ -455,7 +526,29 @@ function exportLeadsMd(list, title = 'Выгрузка лидов для ней�
     if (l.socials?.length) lines.push(`- **Соцсети:** ${l.socials.join(', ')}`);
     if (l.emails?.length) lines.push(`- **Email:** ${l.emails.join(', ')}`);
     if (l.contactPerson) lines.push(`- **Контактное лицо:** ${l.contactPerson}`);
+    if (l.demoUrl) lines.push(`- **Готовое демо:** ${l.demoUrl}`);
     if (l.note) lines.push(`- **Заметка:** ${l.note}`);
+    if (l.enriched) {
+      const en = l.enriched;
+      if (en.hours) lines.push(`- **Часы работы:** ${en.hours}`);
+      if (en.description) lines.push(`- **Описание:** ${en.description}`);
+      if (en.audit?.length) lines.push(`- **Найденные боли (аудит):** ${en.audit.join('; ')}`);
+      if (en.services?.length) {
+        lines.push(`- **Реальные услуги и прайс (НЕ ВЫДУМЫВАТЬ ДРУГИХ ЦЕН):**`);
+        en.services.forEach((sv) => lines.push(`  - ${sv.name}${sv.price ? ` — ${sv.price}` : ''}`));
+      }
+      if (en.photos?.length) {
+        lines.push(`- **Реальные фото (${en.photos.length} шт.):**`);
+        en.photos.forEach((ph) => lines.push(`  - ${ph}`));
+      }
+      if (en.reviews?.length) {
+        lines.push(`- **Реальные отзывы:**`);
+        en.reviews.forEach((rv) => lines.push(`  - ${rv.author} (★${rv.rating}): "${rv.text}"`));
+      }
+      if (en.siteSummary?.text) {
+        lines.push(`- **Контент текущего сайта:** ${en.siteSummary.title ? `[${en.siteSummary.title}] ` : ''}${en.siteSummary.text.slice(0, 600)}`);
+      }
+    }
     lines.push(`- **Карты:** ${maps.map((m) => `[${m.name}${m.direct ? ' (прямая)' : ''}](${m.url})`).join(' | ')}`);
     lines.push(`- **Поиск ЛПР:** [Google](https://www.google.com/search?q=${qName}+владелец+OR+директор) | [Яндекс](https://yandex.ru/search/?text=${qName}+директор) | [Rusprofile](https://www.rusprofile.ru/search?query=${encodeURIComponent(l.name)}) | [VK](https://vk.com/search?c%5Bq%5D=${encodeURIComponent(l.name)}&c%5Bsection%5D=communities)`);
     if (msg) lines.push(`- **Шаблон первого касания:** ${msg}`);
@@ -468,11 +561,48 @@ function exportLeadsMd(list, title = 'Выгрузка лидов для ней�
   a.click();
   toast(`Скачано ${list.length} лидов в .md`);
 }
+function exportLeadsAiJson(list) {
+  if (!list.length) return toast('Нет лидов для выгрузки');
+  if (!CLOUD_ONLY) {
+    location.href = '/api/export.ai.json?ids=' + list.map((l) => l.id).join(',');
+    return toast(`Выгружаю AI-пакет (.json) для ${list.length} лидов`);
+  }
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    count: list.length,
+    leads: list,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `leads-ai-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  toast(`Скачано ${list.length} лидов в AI-пакет (.json)`);
+}
 $('#btn-export').addEventListener('click', () => exportLeadsCsv(applyFilters()));
 $('#btn-export-md')?.addEventListener('click', () => exportLeadsMd(applyFilters(), 'Выгрузка из базы для нейросети'));
 $('#btn-funnel-md')?.addEventListener('click', () => {
-  const list = S.leads.filter((l) => l.status === 'base' || l.status === 'work' || l.status === 'client');
+  const list = S.leads.filter((l) => l.status === 'base' || l.status === 'noanswer' || l.status === 'work' || l.status === 'client');
   exportLeadsMd(list, 'Выгрузка из воронки для нейросети');
+});
+$('#btn-funnel-json')?.addEventListener('click', () => {
+  const list = S.leads.filter((l) => l.status === 'base' || l.status === 'noanswer' || l.status === 'work' || l.status === 'client');
+  exportLeadsAiJson(list);
+});
+async function runGenerateDemos(ids) {
+  const savedBase = localStorage.getItem('lh-demo-baseurl') || '';
+  const baseUrl = prompt('Базовый URL для хостинга демок (например https://username.github.io/demos) или оставь пустым для локального /demos/:', savedBase);
+  if (baseUrl === null) return;
+  localStorage.setItem('lh-demo-baseurl', baseUrl.trim());
+  try {
+    const r = await api('/api/demos/generate', { method: 'POST', body: { ids, baseUrl: baseUrl.trim() } });
+    toast(`Сгенерировано ${r.count} демо-сайтов`);
+    window.open('/demos/', '_blank');
+  } catch (err) { toast(err.message); }
+}
+$('#btn-gen-demos')?.addEventListener('click', () => {
+  const ids = S.leads.filter((l) => l.status === 'work' || l.status === 'base').map((l) => l.id);
+  runGenerateDemos(ids);
 });
 $('#btn-recheck').addEventListener('click', async () => {
   try {
@@ -485,12 +615,27 @@ $('#bulkbar').addEventListener('click', async (e) => {
   const a = e.target.dataset.bulk; if (!a) return;
   const ids = [...S.selected];
   if (a === 'clear') S.selected.clear();
+  if (a === 'enrich') {
+    try {
+      await api('/api/enrich', { method: 'POST', body: { ids, targetStatus: 'base' } });
+      toast(`Запущен допарсинг ${ids.length} лидов (переведены в «В базе»)`);
+      S.selected.clear();
+    } catch (err) { toast(err.message); }
+  }
+  if (a === 'demos') {
+    await runGenerateDemos(ids);
+    S.selected.clear();
+  }
   if (a === 'ai') {
     const selected = S.leads.filter((l) => S.selected.has(l.id));
     for (const l of selected) {
       if (l.status === 'new') await patch(l.id, { status: 'base' });
     }
     exportLeadsMd(S.leads.filter((l) => S.selected.has(l.id)), 'Выбранные лиды для нейросети');
+    S.selected.clear();
+  }
+  if (a === 'ai-json') {
+    exportLeadsAiJson(S.leads.filter((l) => S.selected.has(l.id)));
     S.selected.clear();
   }
   if (a === 'base' || a === 'reject') { for (const id of ids) await patch(id, { status: a }); toast('Готово'); S.selected.clear(); }
@@ -513,10 +658,16 @@ $('#quick-niches').addEventListener('click', (e) => {
   ta.value = cur.join(', ');
 });
 $$('#f-sources .tgl').forEach((b) => b.addEventListener('click', () => b.classList.toggle('on')));
+$$('#f-save-statuses .tgl').forEach((b) => b.addEventListener('click', () => b.classList.toggle('on')));
 $$('#f-limit button').forEach((b) => b.addEventListener('click', () => { $('#f-limit input').value = b.dataset.v; }));
 const PREF_KEY = 'lh-form';
 function saveForm() {
-  localStorage.setItem(PREF_KEY, JSON.stringify({ niches: $('#f-niches').value, cities: $('#f-cities').value, limit: $('#f-limit input').value, headless: $('#f-headless').checked, check: $('#f-check').checked, sources: $$('#f-sources .tgl.on').map((b) => b.dataset.src) }));
+  localStorage.setItem(PREF_KEY, JSON.stringify({
+    niches: $('#f-niches').value, cities: $('#f-cities').value, limit: $('#f-limit input').value,
+    headless: $('#f-headless').checked, check: $('#f-check').checked,
+    sources: $$('#f-sources .tgl.on').map((b) => b.dataset.src),
+    saveStatuses: $$('#f-save-statuses .tgl.on').map((b) => b.dataset.st),
+  }));
 }
 (function loadForm() {
   try {
@@ -524,6 +675,9 @@ function saveForm() {
     $('#f-niches').value = f.niches || ''; $('#f-cities').value = f.cities || ''; $('#f-limit input').value = f.limit || 50;
     $('#f-headless').checked = !!f.headless; $('#f-check').checked = f.check !== false;
     $$('#f-sources .tgl').forEach((b) => b.classList.toggle('on', (f.sources || []).includes(b.dataset.src)));
+    if (Array.isArray(f.saveStatuses)) {
+      $$('#f-save-statuses .tgl').forEach((b) => b.classList.toggle('on', f.saveStatuses.includes(b.dataset.st)));
+    }
   } catch {}
 })();
 
@@ -533,6 +687,7 @@ $('#btn-start').addEventListener('click', async () => {
     await api('/api/parse', { method: 'POST', body: {
       niches: $('#f-niches').value, cities: $('#f-cities').value,
       sources: $$('#f-sources .tgl.on').map((b) => b.dataset.src),
+      saveStatuses: $$('#f-save-statuses .tgl.on').map((b) => b.dataset.st),
       limit: +$('#f-limit input').value, headless: $('#f-headless').checked, checkSites: $('#f-check').checked,
     } });
     $('#log').innerHTML = '';
@@ -568,19 +723,40 @@ function addLog(e) {
 
 // ---------- Воронка ----------
 function renderKanban() {
-  const cols = [['base', 'В базе'], ['work', 'В работе'], ['client', 'Клиенты'], ['reject', 'Отказ']];
+  const cols = [['base', 'В базе'], ['noanswer', 'Недозвон'], ['work', 'В работе'], ['client', 'Клиенты'], ['reject', 'Отказ']];
   $('#kanban').innerHTML = cols.map(([k, t]) => {
     const items = S.leads.filter((l) => l.status === k).sort((a, b) => b.updatedAt - a.updatedAt);
-    return `<div class="col glass" data-col="${k}"><h3>${t}<b>${items.length}</b></h3>${items.map((l) => `
+    return `<div class="col glass" data-col="${k}"><h3 style="display:flex;align-items:center;gap:6px">${t}<b>${items.length}</b>${items.length ? `<button class="pill" data-col-clear="${k}" style="margin-left:auto;padding:2px 8px;font-size:11px" title="Убрать всех из колонки">Очистить</button>` : ''}</h3>${items.map((l) => `
       <div class="card" draggable="true" data-id="${l.id}">
-        <div class="c-top"><span class="chip ${siteStatus(l) === 'pending' ? 'pending' : siteStatus(l)}"><i></i>${SITE[siteStatus(l)]?.short || '…'}</span>${l.rating ? `<span class="rating">${I.star}${Number(l.rating).toFixed(1)}</span>` : ''}</div>
+        <div class="c-top"><span class="chip ${siteStatus(l) === 'pending' ? 'pending' : siteStatus(l)}"><i></i>${SITE[siteStatus(l)]?.short || '…'}</span>${l.rating ? `<span class="rating">${I.star}${Number(l.rating).toFixed(1)}</span>` : ''}<button class="pill" data-k-remove="${l.id}" title="Убрать из воронки (в Новые)" style="margin-left:auto;padding:2px 7px;font-size:11px;line-height:1">✕</button></div>
         <h3 class="c-name">${esc(l.name)}</h3>
         <div class="c-meta">${esc(l.phones[0] || '')}</div>
         ${l.note ? `<div class="c-reason">${esc(l.note)}</div>` : ''}
       </div>`).join('')}</div>`;
   }).join('');
 }
-$('#kanban').addEventListener('click', (e) => { const c = e.target.closest('.card'); if (c) openDrawer(c.dataset.id); });
+$('#kanban').addEventListener('click', async (e) => {
+  const rm = e.target.closest('[data-k-remove]');
+  if (rm) {
+    e.stopPropagation();
+    await patch(rm.dataset.kRemove, { status: 'new' });
+    renderKanban();
+    return toast('Убрано из воронки');
+  }
+  const clr = e.target.closest('[data-col-clear]');
+  if (clr) {
+    e.stopPropagation();
+    const colKey = clr.dataset.colClear;
+    const items = S.leads.filter((l) => l.status === colKey);
+    if (!items.length) return;
+    if (!confirm(`Убрать ${items.length} лидов из колонки? (Вернутся в статус «Новый»)`)) return;
+    for (const l of items) await patch(l.id, { status: 'new' });
+    renderKanban();
+    return toast(`Колонка очищена (${items.length})`);
+  }
+  const c = e.target.closest('.card');
+  if (c) openDrawer(c.dataset.id);
+});
 $('#kanban').addEventListener('dragstart', (e) => { const c = e.target.closest('.card'); if (c) e.dataTransfer.setData('id', c.dataset.id); });
 $('#kanban').addEventListener('dragover', (e) => { const col = e.target.closest('.col'); if (col) { e.preventDefault(); col.classList.add('drop'); } });
 $('#kanban').addEventListener('dragleave', (e) => e.target.closest('.col')?.classList.remove('drop'));
@@ -679,6 +855,30 @@ $('#btn-copy-sql')?.addEventListener('click', () => {
   toast('SQL скопирован — вставь в SQL Editor в Supabase');
 });
 
+function renderEnrich(st) {
+  const el = $('#enrich-status');
+  if (!el) return;
+  if (!st || !st.running) {
+    if (st && st.total && st.done >= st.total) {
+      el.textContent = `Допарсинг готов: ${st.done}/${st.total}`;
+      el.classList.remove('hidden', 'glow');
+      setTimeout(() => { if (!$('#enrich-status')?.classList.contains('glow')) el.classList.add('hidden'); }, 6000);
+    } else {
+      el.classList.add('hidden');
+    }
+    return;
+  }
+  el.textContent = `Допарсинг: ${st.done}/${st.total}${st.current ? ' · ' + st.current : ''} (стоп)`;
+  el.classList.remove('hidden');
+  el.classList.add('glow');
+}
+$('#enrich-status')?.addEventListener('click', async () => {
+  if ($('#enrich-status')?.classList.contains('glow')) {
+    await api('/api/enrich/stop', { method: 'POST' });
+    toast('Останавливаю допарсинг…');
+  }
+});
+
 // ---------- Старт ----------
 (async function init() {
   let jobInfo = null;
@@ -703,6 +903,7 @@ $('#btn-copy-sql')?.addEventListener('click', () => {
   setLeads(leads); S.settings = settings;
   if (jobInfo) {
     renderJob(jobInfo.job);
+    renderEnrich(jobInfo.enrich);
     (jobInfo.logs || []).forEach(addLog);
   }
   render();
@@ -749,6 +950,7 @@ $('#btn-copy-sql')?.addEventListener('click', () => {
 
   const es = new EventSource('/api/events');
   es.addEventListener('job', (e) => renderJob(JSON.parse(e.data)));
+  es.addEventListener('enrich', (e) => renderEnrich(JSON.parse(e.data)));
   es.addEventListener('log', (e) => addLog(JSON.parse(e.data)));
   es.addEventListener('lead', (e) => { const l = JSON.parse(e.data); if (upsertLocal(l)) flashIds.add(l.id); scheduleRender(); });
   es.addEventListener('deleted', (e) => {

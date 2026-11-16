@@ -15,6 +15,8 @@ const APP_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
 try { process.loadEnvFile(path.join(APP_DIR, '.env')); } catch {} // TELEGRAM_BOT_TOKEN и пр.
 const db = require('./src/db');
 const jobs = require('./src/jobs');
+const enrich = require('./src/enrich');
+const demos = require('./src/demos');
 const { closeBrowser } = require('./src/browser');
 
 const PORT = +process.env.PORT || 3777;
@@ -28,6 +30,7 @@ const broadcastSSE = (type, data) => {
 };
 jobs.subscribe(broadcastSSE);
 db.subscribe(broadcastSSE);
+enrich.subscribe(broadcastSSE);
 
 function send(res, code, body, type = 'application/json; charset=utf-8') {
   res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
@@ -41,7 +44,7 @@ function readBody(req) {
   });
 }
 
-const { toCsv, HOT, siteStatus } = require('./src/leadUtil');
+const { toCsv, toMarkdown, toAiJson, HOT, siteStatus } = require('./src/leadUtil');
 const bot = require('./src/telegram');
 const tunnel = require('./src/tunnel');
 
@@ -89,7 +92,22 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/stop' && req.method === 'POST') { jobs.stop(); return send(res, 200, { ok: true }); }
     if (p === '/api/recheck' && req.method === 'POST') { const b = await readBody(req); return send(res, 200, { queued: jobs.recheck(b.ids) }); }
-    if (p === '/api/job') return send(res, 200, { job: jobs.getJob(), logs: jobs.getLogs(), checks: jobs.checkStats() });
+    if (p === '/api/enrich' && req.method === 'POST') {
+      try {
+        const b = await readBody(req);
+        return send(res, 200, await enrich.start(b.ids || [], { targetStatus: b.targetStatus || 'base', headless: typeof b.headless === 'boolean' ? b.headless : undefined }));
+      } catch (e) { return send(res, 400, { error: e.message }); }
+    }
+    if (p === '/api/enrich/stop' && req.method === 'POST') { enrich.stop(); return send(res, 200, { ok: true }); }
+    if (p === '/api/demos/generate' && req.method === 'POST') {
+      try {
+        const b = await readBody(req);
+        const r = demos.generateBatch(b.ids, { baseUrl: b.baseUrl });
+        for (const item of r.results) jobs.notifyLead(db.getLead(item.id));
+        return send(res, 200, r);
+      } catch (e) { return send(res, 400, { error: e.message }); }
+    }
+    if (p === '/api/job') return send(res, 200, { job: jobs.getJob(), logs: jobs.getLogs(), checks: jobs.checkStats(), enrich: enrich.getState() });
     if (p === '/api/settings') {
       if (req.method === 'POST') return send(res, 200, db.setSettings(await readBody(req)));
       return send(res, 200, db.getSettings());
@@ -103,6 +121,20 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="leads-${new Date().toISOString().slice(0, 10)}.csv"` });
       return res.end(toCsv(list, db.getSettings()));
     }
+    if (p === '/api/export.ai.json') {
+      const ids = url.searchParams.get('ids');
+      let list = db.getLeads();
+      if (ids) { const s = new Set(ids.split(',')); list = list.filter((l) => s.has(l.id)); }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="leads-ai-${new Date().toISOString().slice(0, 10)}.json"` });
+      return res.end(JSON.stringify(toAiJson(list, db.getSettings()), null, 2));
+    }
+    if (p === '/api/export.ai.md') {
+      const ids = url.searchParams.get('ids');
+      let list = db.getLeads();
+      if (ids) { const s = new Set(ids.split(',')); list = list.filter((l) => s.has(l.id)); }
+      res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `attachment; filename="leads-ai-${new Date().toISOString().slice(0, 10)}.md"` });
+      return res.end(toMarkdown(list, db.getSettings(), 'AI-пакет лидов'));
+    }
     // Mini App: файл CSV приходит в чат с ботом (скачивание внутри Telegram работает ненадёжно)
     if (p === '/api/tg/export' && req.method === 'POST') {
       const b = await readBody(req);
@@ -112,6 +144,15 @@ const server = http.createServer(async (req, res) => {
       if (!list.length) return send(res, 400, { error: 'Нечего выгружать' });
       try { await bot.sendCsv(tgUser?.id, list, b.title || 'Выгрузка'); return send(res, 200, { ok: true, count: list.length }); }
       catch (e) { return send(res, 400, { error: e.message }); }
+    }
+    // локальные демо-сайты (/demos/...)
+    if (p === '/demos' || p.startsWith('/demos/')) {
+      const rel = p.replace(/^\/demos\/?/, '');
+      let df = path.normalize(path.join(demos.DEMOS_DIR, rel === '' ? 'index.html' : rel.endsWith('/') ? rel + 'index.html' : rel));
+      if (!df.startsWith(demos.DEMOS_DIR) || !fs.existsSync(df)) return send(res, 404, { error: 'demo not found' });
+      if (fs.statSync(df).isDirectory()) df = path.join(df, 'index.html');
+      if (!fs.existsSync(df)) return send(res, 404, { error: 'demo not found' });
+      return send(res, 200, fs.readFileSync(df), MIME[path.extname(df)] || 'text/html; charset=utf-8');
     }
     // статика
     const isTg = p.startsWith('/tg/');

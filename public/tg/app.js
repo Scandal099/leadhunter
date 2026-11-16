@@ -10,7 +10,7 @@ const SITE = {
   dead: ['Не работает', '#ff7a45'], weak: ['Слабый сайт', '#c38bff'], ok: ['Есть сайт', '#6b7080'],
   unknown: ['Не проверен', '#6b7080'], pending: ['Проверяется…', '#6b7080'],
 };
-const STATUS = { new: 'Новый', base: 'В базе', work: 'В работе', client: 'Клиент', reject: 'Отказ' };
+const STATUS = { new: 'Новый', base: 'В базе', noanswer: 'Недозвон', work: 'В работе', client: 'Клиент', reject: 'Отказ' };
 const HOT = new Set(['none', 'social', 'constructor', 'dead', 'weak']);
 const NICHES = ['автосервис', 'шиномонтаж', 'барбершоп', 'салон красоты', 'стоматология', 'клининг', 'ремонт квартир', 'натяжные потолки', 'фитнес', 'юрист', 'груминг', 'автомойка', 'кафе', 'пекарня', 'цветы', 'ветклиника', 'массаж', 'тату-салон', 'изготовление мебели'];
 const SRC = { '2gis': '2ГИС', yandex: 'Яндекс', google: 'Google' };
@@ -242,7 +242,7 @@ $('#recheckList').addEventListener('click', async () => {
 
 // ---------- воронка ----------
 function renderFunnel() {
-  const keys = ['base', 'work', 'client', 'reject'];
+  const keys = ['base', 'noanswer', 'work', 'client', 'reject'];
   $('#funnelTabs').innerHTML = keys.map((k) => `<button class="${S.funnel === k ? 'on' : ''}" data-k="${k}"><b>${S.leads.filter((l) => l.status === k).length}</b>${STATUS[k]}</button>`).join('');
   const list = S.leads.filter((l) => l.status === S.funnel).sort((a, b) => b.updatedAt - a.updatedAt);
   $('#funnelList').innerHTML = list.length ? list.map(leadCard).join('') : `<div class="empty">Пусто.<br>Открой контору в «Базе» и поставь статус «${STATUS[S.funnel]}».</div>`;

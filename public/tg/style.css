@@ -175,5 +175,10 @@ input[type=search] { -webkit-appearance: none; }
 
 .denied { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column; justify-content: center; text-align: center; padding: 30px; }
 
+.seg.funnel { overflow-x: auto; scrollbar-width: none; }
+.seg.funnel::-webkit-scrollbar { display: none; }
+.seg.funnel button { flex: 0 0 auto; min-width: 74px; }
+#funnelList { max-height: calc(100dvh - 210px); overflow-y: auto; -webkit-overflow-scrolling: touch; padding-right: 2px; }
+
 #toast { position: fixed; left: 50%; bottom: calc(90px + var(--safe-b)); transform: translate(-50%, 20px); opacity: 0; z-index: 40; background: #fff; color: #111; padding: 10px 16px; border-radius: 12px; font-size: 14px; font-weight: 500; transition: .25s; pointer-events: none; max-width: 90vw; text-align: center; }
 #toast.on { opacity: 1; transform: translate(-50%, 0); }

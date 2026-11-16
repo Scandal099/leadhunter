@@ -1,7 +1,7 @@
 const { mapLinks } = require('../public/maplinks');
 // Общие функции для лидов: статусы, CSV, текст первого касания (сервер + Telegram-бот)
 const STATUS_RU = { none: 'Нет сайта', social: 'Только соцсети', constructor: 'Конструктор', dead: 'Сайт не работает', weak: 'Слабый сайт', ok: 'Нормальный сайт', unknown: 'Не проверен', pending: 'Проверяется' };
-const LEAD_STATUS = { new: 'Новый', base: 'В базе', work: 'В работе', client: 'Клиент', reject: 'Отказ' };
+const LEAD_STATUS = { new: 'Новый', base: 'В базе', noanswer: 'Недозвон', work: 'В работе', client: 'Клиент', reject: 'Отказ' };
 const HOT = new Set(['none', 'social', 'constructor', 'dead', 'weak']);
 
 const siteStatus = (l) => l.site?.status || (l.website ? 'pending' : (l.socials?.length ? 'social' : 'none'));
@@ -56,7 +56,29 @@ function toMarkdown(leads, settings, title = 'Выгрузка лидов для
     if (l.socials?.length) lines.push(`- **Соцсети:** ${l.socials.join(', ')}`);
     if (l.emails?.length) lines.push(`- **Email:** ${l.emails.join(', ')}`);
     if (l.contactPerson) lines.push(`- **Контактное лицо:** ${l.contactPerson}`);
+    if (l.demoUrl) lines.push(`- **Готовое демо:** ${l.demoUrl}`);
     if (l.note) lines.push(`- **Заметка:** ${l.note}`);
+    if (l.enriched) {
+      const en = l.enriched;
+      if (en.hours) lines.push(`- **Часы работы:** ${en.hours}`);
+      if (en.description) lines.push(`- **Описание:** ${en.description}`);
+      if (en.audit?.length) lines.push(`- **Найденные боли (аудит):** ${en.audit.join('; ')}`);
+      if (en.services?.length) {
+        lines.push(`- **Реальные услуги и прайс (НЕ ВЫДУМЫВАТЬ ДРУГИХ ЦЕН):**`);
+        en.services.forEach((sv) => lines.push(`  - ${sv.name}${sv.price ? ` — ${sv.price}` : ''}${sv.image ? ` ([фото](${sv.image}))` : ''}`));
+      }
+      if (en.photos?.length) {
+        lines.push(`- **Реальные фото (${en.photos.length} шт.):**`);
+        en.photos.forEach((ph) => lines.push(`  - ${ph}`));
+      }
+      if (en.reviews?.length) {
+        lines.push(`- **Реальные отзывы:**`);
+        en.reviews.forEach((rv) => lines.push(`  - ${rv.author} (★${rv.rating}): "${rv.text}"`));
+      }
+      if (en.siteSummary?.text) {
+        lines.push(`- **Контент текущего сайта:** ${en.siteSummary.title ? `[${en.siteSummary.title}] ` : ''}${en.siteSummary.text.slice(0, 600)}`);
+      }
+    }
     lines.push(`- **Карты:** ${maps.map((m) => `[${m.name}${m.direct ? ' (прямая)' : ''}](${m.url})`).join(' | ')}`);
     lines.push(`- **Поиск ЛПР:** [Google](https://www.google.com/search?q=${qName}+владелец+OR+директор) | [Яндекс](https://yandex.ru/search/?text=${qName}+директор) | [Rusprofile](https://www.rusprofile.ru/search?query=${encodeURIComponent(l.name)}) | [VK](https://vk.com/search?c%5Bq%5D=${encodeURIComponent(l.name)}&c%5Bsection%5D=communities)`);
     if (msg) lines.push(`- **Шаблон первого касания:** ${msg}`);
@@ -65,4 +87,38 @@ function toMarkdown(leads, settings, title = 'Выгрузка лидов для
   return lines.join('\n');
 }
 
-module.exports = { STATUS_RU, LEAD_STATUS, HOT, siteStatus, score, problemText, toCsv, toMarkdown };
+function toAiJson(leads, settings) {
+  return {
+    exportedAt: new Date().toISOString(),
+    count: leads.length,
+    _instructions: [
+      '1. ПРАВИЛО БЕЗ ВРАНЬЯ: Используй ТОЛЬКО реальные цены, услуги, фото, телефоны и адреса из этого файла. Если прайса нет — пиши "Цена по запросу", не придумывай цифры.',
+      '2. СНАЧАЛА ЭТАЛОН: Выбери компанию с самым полным набором данных (фото + услуги + отзывы), сделай 1 идеальный эталонный сайт и проверь его на мобильном экране.',
+      '3. МАСШТАБИРОВАНИЕ И ПРОВЕРКА: Сгенерируй демо-сайты для остальных компаний по эталону, а затем прогони факт-чек, сверив каждую цифру с этим JSON.',
+    ],
+    leads: leads.map((l) => ({
+      id: l.id,
+      name: l.name,
+      niche: l.niche || '',
+      category: l.category || '',
+      city: l.city || '',
+      address: l.address || '',
+      phones: l.phones || [],
+      emails: l.emails || [],
+      socials: l.socials || [],
+      website: l.website || '',
+      siteStatus: siteStatus(l),
+      siteReasons: l.site?.reasons || [],
+      rating: l.rating || null,
+      reviewsCount: l.reviews || null,
+      lat: l.lat || null,
+      lon: l.lon || null,
+      status: l.status,
+      demoUrl: l.demoUrl || '',
+      mapLinks: mapLinks(l, settings),
+      enriched: l.enriched || null,
+    })),
+  };
+}
+
+module.exports = { STATUS_RU, LEAD_STATUS, HOT, siteStatus, score, problemText, toCsv, toMarkdown, toAiJson };

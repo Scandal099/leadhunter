@@ -330,7 +330,7 @@ function upsertLead(input) {
 function updateLead(id, patch) {
   const l = leads.find((x) => x.id === id);
   if (!l) return null;
-  const allowed = ['status', 'note', 'contactPerson', 'website', 'site', 'phones', 'socials'];
+  const allowed = ['status', 'note', 'contactPerson', 'website', 'site', 'phones', 'socials', 'enriched', 'demoUrl'];
   for (const k of allowed) if (k in patch) l[k] = patch[k];
   l.updatedAt = Date.now();
   scheduleSave();
